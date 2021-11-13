@@ -300,6 +300,9 @@ static const struct proc_ops hello_proc_ops = {
     .proc_release = single_release,
 };
 
+int lookup_init(void);
+unsigned long extern (*kln_pointer)(const char *name);
+
 #define PROC_NAME "hello"
 int init_module(void)
 {
@@ -307,6 +310,14 @@ int init_module(void)
     int rc;
 
     pr_info("Initialization");
+
+    if ((rc = lookup_init())) {
+        pr_info("Can't lookup 'kallsyms_lookup_name'");
+        return rc;
+    }
+
+    pr_info("kallsyms_lookup_name address = 0x%lx\n",
+            kln_pointer("kallsyms_lookup_name"));
 
     //test = kallsyms_lookup_name("walk_page_range");
     //remap_pfn_range

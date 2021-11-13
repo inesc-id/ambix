@@ -1,8 +1,9 @@
-obj-m += hello.o
+obj-m += ambix.o
 #obj-m += perf_counters.o
 
 #obj-m += ambix_impoved.o
 #ambix_impoved-objs := hello.o perf_counters.o
+ambix-objs := hello.o FindKallsymsLookupName.o
 
 all:
 	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
@@ -25,11 +26,11 @@ gtags:
 %.d: %.c
 	@clang -MD -MF $@ -I/usr/lib/modules/$(shell uname -r)/build/include/ $^
 	
-insmod: hello.ko
-	@sudo insmod ./hello.ko
+insmod: ambix.ko
+	@sudo insmod ./ambix.ko
 
 rmmod:
-	@sudo rmmod hello
+	@sudo rmmod ambix
 
 run:
 	@make -s rmmod || true
