@@ -1,3 +1,4 @@
+#define pr_fmt(fmt) "hello.find_kallsyms_lookup_name: " fmt
 /*
 * kallsyms_lookup_name undefined and finding not exported functions in the linux kernel
 *
@@ -18,14 +19,12 @@
 * example for _x86_64.
 */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/kprobes.h>
 
 #define KPROBE_PRE_HANDLER(fname) static int __kprobes fname(struct kprobe *p, struct pt_regs *regs)
 
 long unsigned int kln_addr = 0;
-unsigned long (*kln_pointer)(const char *name) = NULL;
+unsigned long (*the_kallsyms_lookup_name)(const char * name) = NULL;
 
 static struct kprobe kp0, kp1;
 
@@ -59,7 +58,7 @@ static int do_register_kprobe(struct kprobe *kp, char *symbol_name, void *handle
   return ret;
 }
 
-int lookup_init(void)
+int find_kallsyms_lookup_name(void)
 {
   int ret;
 
@@ -80,11 +79,7 @@ int lookup_init(void)
 
   pr_info("kallsyms_lookup_name address = 0x%lx\n", kln_addr);
 
-  kln_pointer = (unsigned long (*)(const char *name)) kln_addr;
-
-  pr_info("kallsyms_lookup_name address = 0x%lx\n", kln_pointer("kallsyms_lookup_name"));
+  the_kallsyms_lookup_name = (unsigned long (*)(const char *name)) kln_addr;
 
   return 0;
 }
-//EXPORT_SYMBOL(lookup_init);
-
