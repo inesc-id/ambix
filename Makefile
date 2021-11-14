@@ -1,5 +1,5 @@
 obj-m += ambix.o
-ambix-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o
+ambix-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix_hyb.o
 
 all:
 	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules

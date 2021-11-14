@@ -13,13 +13,14 @@
 #include <linux/seq_file.h> /* for seq_file */
 #include <linux/slab.h>
 
+#include "ambix_hyb.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ilia Kuzmin");
-MODULE_DESCRIPTION("Bandwidth-aware page replacement");
-MODULE_VERSION("0.01");
+MODULE_DESCRIPTION("Bandwidth-aware page replacement; Ambix successor");
+MODULE_VERSION("0.10");
 
 /**
  * This function is called for each "step" of a sequence
@@ -39,16 +40,6 @@ static int hello_show(struct seq_file *s, void *)
                  value * 64 / 1024 / 1024, time);
     }
 
-    return 0;
-}
-
-static int hello_bind(const pid_t pid) {
-    pr_info("Binding %d\n", pid);
-    return 0;
-}
-
-static int hello_unbind(const pid_t pid) {
-    pr_info("Un-Binding %d\n", pid);
     return 0;
 }
 
@@ -79,12 +70,12 @@ static ssize_t hello_proc_write(
     //del_timer_sync(&led_blink_timer);
 
     if (!strcmp(buf, "bind")) {
-        if (hello_bind(current->pid)) {
+        if (ambix_bind_pid(current->pid)) {
             rc = -EINVAL;
         }
     }
     else if (!strcmp(buf, "unbind")) {
-        if (hello_unbind(current->pid)) {
+        if (ambix_unbind_pid(current->pid)) {
             rc = -EINVAL;
         }
     }
@@ -94,7 +85,7 @@ static ssize_t hello_proc_write(
             pr_warn("Can't parse pid '%s'", buf + 5);
             rc = -EINVAL;
         }
-        else if (hello_bind(pid)) {
+        else if (ambix_bind_pid(pid)) {
             rc = -EINVAL;
         }
     }
@@ -104,7 +95,7 @@ static ssize_t hello_proc_write(
             pr_warn("Can't parse pid '%s'", buf + 7);
             rc = -EINVAL;
         }
-        else if (hello_unbind(pid)) {
+        else if (ambix_unbind_pid(pid)) {
             rc = -EINVAL;
         }
     }
@@ -152,13 +143,18 @@ int init_module(void)
     //remap_pfn_range
     //printk(KERN_INFO "initialization %ld; %p\n", test, &proc_create);
     if ((rc = perf_counters_init())) {
-        pr_info("PCM initialization failed");
+        pr_warn("PCM initialization failed");
+        return rc;
+    }
+
+    if ((rc = ambix_init())) {
+        pr_warn("Ambix initialization failed");
         return rc;
     }
 
     entry = proc_create(PROC_NAME, 0666, NULL, &hello_proc_ops);
     if (!entry) {
-        pr_info("proc initialization failed");
+        pr_warn("proc initialization failed");
         return -ENOMEM;
     }
 
@@ -169,6 +165,7 @@ void cleanup_module(void)
 {
     pr_info("release\n");
     remove_proc_entry(PROC_NAME, NULL);
+    ambix_cleanup();
     perf_counters_disable();
     perf_counters_cleanup();
 }
