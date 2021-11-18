@@ -1,6 +1,4 @@
-#ifndef _AMBIX_H
-#define _AMBIX_H
-
+#pragma once
 
 // Intervals and limits:
 
@@ -24,13 +22,14 @@
 #define SWITCH_MODE 3
 #define NVRAM_CLEAR 4
 #define NVRAM_WRITE_MODE 5
-#define MAX_N_FIND MAX_N_PER_PACKET * MAX_PACKETS - 1 // Amount of pages that fit in exactly MAX_PACKETS netlink packets making space for retval struct (end struct)
+#define MAX_N_FIND 131071
 #define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
+#define PMM_MIXED 1
 
 
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
 static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {2};
+static const int NVRAM_NODES[] = {0}; // FIXME {2}
 
 static const int n_dram_nodes = sizeof(DRAM_NODES)/sizeof(DRAM_NODES[0]);
 static const int n_nvram_nodes = sizeof(NVRAM_NODES)/sizeof(NVRAM_NODES[0]);
@@ -69,12 +68,12 @@ typedef struct req {
 
 // Misc:
 #define MAX_COMMAND_SIZE 80
-#define DRAM_TARGET 0.95
-#define DRAM_LIMIT 0.96
-#define NVRAM_TARGET 0.95
-#define NVRAM_LIMIT 0.98
+#define DRAM_TARGET 95
+#define DRAM_LIMIT 96
+#define NVRAM_TARGET 95
+#define NVRAM_LIMIT 98
 #define MAX_INTERVAL_MUL 1
-#define INTERVAL_INC_FACTOR 1.0
+#define INTERVAL_INC_FACTOR 1
 
 // Memory ranges: (64-bit systems only use 48-bit)
 #define IS_64BIT (sizeof(void*) == 8)
@@ -112,4 +111,3 @@ int contains(int value, int mode) {
     }
     return 0;
 }
-#endif

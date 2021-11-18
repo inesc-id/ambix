@@ -12,6 +12,7 @@
 #include <linux/proc_fs.h>  /* Necessary because we use the proc fs */
 #include <linux/seq_file.h> /* for seq_file */
 #include <linux/slab.h>
+#include <linux/timer.h>
 
 #include "ambix_hyb.h"
 #include "find_kallsyms_lookup_name.h"
@@ -123,6 +124,29 @@ static const struct proc_ops hello_proc_ops = {
     .proc_release = single_release,
 };
 
+// ---------------------------------------------------------------------------------
+static struct timer_list g_timer;
+unsigned g_time_interval = 1000;
+void tmr_handle(struct timer_list *)
+{
+    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
+    ambix_check_memory();
+}
+
+int tmr_init(void)
+{
+    timer_setup(&g_timer, tmr_handle, 0);
+    tmr_handle(&g_timer);
+    return 0;
+}
+
+void tmr_cleanup(void)
+{
+    pr_debug("Releasing timer");
+    del_timer(&g_timer);
+}
+
+// ---------------------------------------------------------------------------------
 
 #define PROC_NAME "hello"
 int init_module(void)
@@ -158,12 +182,17 @@ int init_module(void)
         return -ENOMEM;
     }
 
+    if ((rc = tmr_init())) {
+        return rc;
+    }
+
     return 0;
 }
 
 void cleanup_module(void)
 {
     pr_info("release\n");
+    tmr_cleanup();
     remove_proc_entry(PROC_NAME, NULL);
     ambix_cleanup();
     perf_counters_disable();

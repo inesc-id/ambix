@@ -154,6 +154,18 @@ bool perf_counters_read_change(const size_t idx, u64 * value, u64 * time)
     return enabled & running;
 }
 
+u64 perf_counters_pmm_bw(void)
+{
+    //TODO: implement me
+    return 0;
+}
+
+u64 perf_counters_pmm_writes(void)
+{
+    //TODO implement me
+    return 0;
+}
+
 void perf_counters_disable(void)
 {
     size_t i;

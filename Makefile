@@ -1,5 +1,5 @@
-obj-m += ambix.o
-ambix-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix_hyb.o
+obj-m += kmod.o
+kmod-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix_hyb.o
 
 all:
 	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
@@ -22,11 +22,11 @@ gtags:
 %.d: %.c
 	@clang -MD -MF $@ -I/usr/lib/modules/$(shell uname -r)/build/include/ $^
 	
-insmod: ambix.ko
-	@sudo insmod ./ambix.ko
+insmod: kmod.ko
+	@sudo insmod ./kmod.ko
 
 rmmod:
-	@sudo rmmod ambix
+	@sudo rmmod kmod
 
 run:
 	@make -s rmmod || true
