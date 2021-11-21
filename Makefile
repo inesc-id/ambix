@@ -1,6 +1,9 @@
 obj-m += kmod.o
 kmod-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix_hyb.o
 
+.tags:
+	@ctags -f $@ -R .
+
 all:
 	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 

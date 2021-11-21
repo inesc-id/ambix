@@ -22,7 +22,7 @@
 #define SWITCH_MODE 3
 #define NVRAM_CLEAR 4
 #define NVRAM_WRITE_MODE 5
-#define MAX_N_FIND 131071
+#define MAX_N_FIND 131071U
 #define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
 #define PMM_MIXED 1
 
@@ -68,10 +68,6 @@ typedef struct req {
 
 // Misc:
 #define MAX_COMMAND_SIZE 80
-#define DRAM_TARGET 95
-#define DRAM_LIMIT 96
-#define NVRAM_TARGET 95
-#define NVRAM_LIMIT 98
 #define MAX_INTERVAL_MUL 1
 #define INTERVAL_INC_FACTOR 1
 

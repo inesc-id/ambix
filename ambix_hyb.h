@@ -3,7 +3,7 @@
 int ambix_init(void);
 void ambix_cleanup(void);
 
-void ambix_check_memory(void);
+int ambix_check_memory(void);
 
 int ambix_bind_pid(pid_t pid);
 int ambix_unbind_pid(pid_t pid);
