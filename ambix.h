@@ -5,7 +5,6 @@
 #define MEMCHECK_INTERVAL PCM_DELAY * 1000
 #define NVRAMWRCHK_INTERVAL PCM_DELAY * 1000
 #define CLEAR_DELAY 50
-#define NVRAM_BW_THRESH 10
 
 // BW info (for checking pcm output)
 #define DRAM_BW_MAX 50000
@@ -26,13 +25,6 @@
 #define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
 #define PMM_MIXED 1
 
-
-// Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
-static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {0}; // FIXME {2}
-
-static const int n_dram_nodes = sizeof(DRAM_NODES)/sizeof(DRAM_NODES[0]);
-static const int n_nvram_nodes = sizeof(NVRAM_NODES)/sizeof(NVRAM_NODES[0]);
 
 // Netlink:
 #define NETLINK_USER 31
@@ -88,22 +80,3 @@ int int_min(int val1, int val2) {
     return val1;
 }
 
-int contains(int value, int mode) {
-    const int *array;
-    int size, i;
-
-    if(mode == NVRAM_MODE) {
-        array = NVRAM_NODES;
-        size = n_nvram_nodes;
-    }
-    else {
-        array = DRAM_NODES;
-        size = n_dram_nodes;
-    }
-    for(i=0; i<size; i++) {
-        if(array[i] == value) {
-            return 1;
-        }
-    }
-    return 0;
-}

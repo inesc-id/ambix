@@ -126,15 +126,16 @@ static const struct proc_ops hello_proc_ops = {
 
 // ---------------------------------------------------------------------------------
 static struct timer_list g_timer;
-unsigned g_time_interval = 1000;
+static unsigned g_time_interval = 5000;
 void tmr_handle(struct timer_list *)
 {
-    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
     ambix_check_memory();
+    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
 }
 
 int tmr_init(void)
 {
+    pr_info("Initializing timer");
     timer_setup(&g_timer, tmr_handle, 0);
     tmr_handle(&g_timer);
     return 0;
@@ -166,10 +167,11 @@ int init_module(void)
     //test = kallsyms_lookup_name("walk_page_range");
     //remap_pfn_range
     //printk(KERN_INFO "initialization %ld; %p\n", test, &proc_create);
-    if ((rc = perf_counters_init())) {
-        pr_warn("PCM initialization failed");
-        return rc;
-    }
+    //FIXME:
+    //FIXME: -- if ((rc = perf_counters_init())) {
+    //FIXME: --     pr_warn("PCM initialization failed");
+    //FIXME: --     return rc;
+    //FIXME: -- }
 
     if ((rc = ambix_init())) {
         pr_warn("Ambix initialization failed");
@@ -195,7 +197,7 @@ void cleanup_module(void)
     tmr_cleanup();
     remove_proc_entry(PROC_NAME, NULL);
     ambix_cleanup();
-    perf_counters_disable();
-    perf_counters_cleanup();
+    // FIXME: perf_counters_disable();
+    // FIXME: perf_counters_cleanup();
 }
 

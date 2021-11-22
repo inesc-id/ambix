@@ -8,6 +8,7 @@
  * @see https://github.com/miguelmarques1904/ambix for a full description of the module.
  */
 
+#define DEBUG
 #define pr_fmt(fmt) "hello.PLACEMENT: " fmt
 
 #include <linux/delay.h>
@@ -44,6 +45,16 @@
 #define DRAM_USAGE_LIMIT 96
 #define NVRAM_USAGE_TARGET 95
 #define NVRAM_USAGE_LIMIT 98
+
+#define NVRAM_BW_THRESH 10
+
+// Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
+static const int DRAM_NODES[] = {0};
+static const int NVRAM_NODES[] = {1}; // FIXME {2}
+
+static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
+static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
+
 
 int g_nr_pids = 0;
 struct task_struct ** g_task_items;
@@ -89,6 +100,27 @@ HELPER FUNCTIONS
 
 -------------------------------------------------------------------------------
 */
+
+//TODO: rewrite me
+int contains(int value, int mode) {
+    const int *array;
+    int size, i;
+
+    if(mode == NVRAM_MODE) {
+        array = NVRAM_NODES;
+        size = n_nvram_nodes;
+    }
+    else {
+        array = DRAM_NODES;
+        size = n_dram_nodes;
+    }
+    for(i=0; i<size; i++) {
+        if(array[i] == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 
 static int find_target_process(pid_t pid)
@@ -156,7 +188,8 @@ static int update_pid_list(int i)
     return 0;
 }
 
-static int refresh_pids(void) {
+static int refresh_pids(void)
+{
     int i;
 
     for (i=0; i < g_nr_pids; i++) {
@@ -166,10 +199,8 @@ static int refresh_pids(void) {
         }
 
     }
-
-    printk(KERN_INFO "LIST AFTER REFRESH:");
     for(i=0; i<g_nr_pids; i++) {
-        printk(KERN_INFO "i:%d, pid:%d\n", i, g_task_items[i]->pid);
+        pr_debug("Bound process idx:%d, pid:%d\n", i, g_task_items[i]->pid);
     }
 
     return 0;
@@ -502,7 +533,11 @@ int mem_walk(struct pte_callback_context_t * ctx, int n, int mode)
         return -1;
     }
 
+    pr_debug("Memory walk{ mode:%d n:%d last_pid:%d last_addr:%p }\n",
+            mode, n, *last_pid, (void *) *last_addr);
     *last_pid = do_page_walk(pte_handler, ctx, *last_pid, *last_addr);
+    pr_debug("Memory walk complete {n_found:%d last_pid:%d last_addr:%p}\n",
+            ctx->n_found, *last_pid, (void *) *last_addr);
 
     if (ctx->n_found < ctx->n_to_find
     && (ctx->n_backup > 0)) {
@@ -543,13 +578,13 @@ static int pte_callback_nvram_clear(
     return 0;
 }
 
-int clear_nvram_ptes(struct pte_callback_context_t * ctx)
+static int clear_nvram_ptes(struct pte_callback_context_t * ctx)
 {
     struct mm_struct *mm;
     struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_nvram_clear};
     int i;
 
-    refresh_pids(); // ??
+    pr_debug("Cleaning NVRAM PTEs");
 
     for (i = 0; i < g_nr_pids; i++) {
         mm = g_task_items[i]->mm;
@@ -630,8 +665,8 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
 
     }
     else if ((nvram_found < dram_found) && (ctx->n_switch_backup > 0)) {
-        int remaining = dram_found - nvram_found;
-        int to_add = int_min(ctx->n_switch_backup, remaining);
+        unsigned remaining = dram_found - nvram_found;
+        int to_add = min(ctx->n_switch_backup, remaining);
         int i;
         int old_dram_start = nvram_found + 1;
         int new_dram_start = old_dram_start + to_add;
@@ -723,7 +758,6 @@ MESSAGE/REQUEST PROCESSING
 
 int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int mode)
 {
-    refresh_pids();
     if (g_nr_pids == 0)
         return -1;
 
@@ -805,7 +839,7 @@ int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int m
 enum pool_t { DRAM_POOL, NVRAM_POOL };
 
 #define K(x) ((x) << (PAGE_SHIFT - 10))
-const int * get_pool_nodes(enum pool_t pool)
+static const int * get_pool_nodes(enum pool_t pool)
 {
     switch (pool) {
     case DRAM_POOL: return DRAM_NODES;
@@ -816,7 +850,7 @@ const int * get_pool_nodes(enum pool_t pool)
     return ERR_PTR(-EINVAL);
 }
 
-size_t get_pool_size(enum pool_t pool)
+static size_t get_pool_size(enum pool_t pool)
 {
     switch (pool) {
     case DRAM_POOL: return n_dram_nodes;
@@ -827,7 +861,7 @@ size_t get_pool_size(enum pool_t pool)
     return 0;
 }
 
-u32 get_memory_usage(enum pool_t pool)
+static u32 get_memory_usage(enum pool_t pool)
 {
     int i = 0;
     u64 totalram = 0, freeram = 0;
@@ -843,7 +877,7 @@ u32 get_memory_usage(enum pool_t pool)
     return K(totalram - freeram) * USAGE_FACTOR / K(totalram);
 }
 
-u64 get_memory_total(enum pool_t pool)
+static u64 get_memory_total(enum pool_t pool)
 {
     int i = 0;
     u64 totalram = 0;
@@ -858,7 +892,7 @@ u64 get_memory_total(enum pool_t pool)
     return K(totalram);
 }
 
-u32 get_memory_free_pages(enum pool_t pool)
+static u32 get_memory_free_pages(enum pool_t pool)
 {
     int i = 0;
     u64 freeram = 0;
@@ -876,13 +910,15 @@ u32 get_memory_free_pages(enum pool_t pool)
 int g_switch_act = 1;
 int g_thresh_act = 1;
 
-u32 ambix_migrate_pages(struct pte_callback_context_t *, int n_pages, int mode);
+static u32 ambix_migrate_pages(struct pte_callback_context_t *, int n_pages, int mode);
 
 //MAIN ENTRY POINT
 int ambix_check_memory(void)
 {
     u32 n_migrated = 0;
     struct pte_callback_context_t * ctx = &g_context;
+
+    pr_debug("Memory migration routine\n");
 
     if (g_thresh_act || g_switch_act) {
         u32 dram_usage;
@@ -893,6 +929,12 @@ int ambix_check_memory(void)
         pr_debug("Current NVRAM Usage: %d\n", nvram_usage);
     }
 
+    refresh_pids();
+    if (g_nr_pids == 0) {
+        pr_debug("No bound processes...\n");
+        return 0;
+    }
+
     if (g_switch_act) {
         u64 pmm_bw = 0;
         if (PMM_MIXED) {
@@ -901,16 +943,11 @@ int ambix_check_memory(void)
         else {
             pmm_bw = perf_counters_pmm_writes();
         }
+        pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw, NVRAM_BW_THRESH);
         if (pmm_bw > NVRAM_BW_THRESH) {
             clear_nvram_ptes(ctx);
-            if (get_memory_usage(DRAM_POOL) >= DRAM_USAGE_TARGET) {
-                u32 num = ambix_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
-                if (num > 0) {
-                    n_migrated += num;
-                    pr_debug("DRAM<->NVRAM: Switched %d pages.\n", num);
-                }
-            }
-            else {
+            if (get_memory_usage(DRAM_POOL) < DRAM_USAGE_TARGET) {
+                pr_debug("Sending....");
                 u64 n_bytes = (DRAM_USAGE_LIMIT - get_memory_usage(DRAM_POOL))
                                 * get_memory_total(DRAM_POOL) / USAGE_FACTOR;
                 u32 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
@@ -918,6 +955,14 @@ int ambix_check_memory(void)
                 if (num > 0) {
                     n_migrated += num;
                     pr_debug("NVRAM->DRAM: Sent %d intensive pages out of %d.\n", num, n_pages);
+                }
+            }
+            else {
+                pr_debug("Switching....");
+                u32 num = ambix_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
+                if (num > 0) {
+                    n_migrated += num;
+                    pr_debug("DRAM<->NVRAM: Switched %d pages.\n", num);
                 }
             }
         }
@@ -957,15 +1002,17 @@ int ambix_check_memory(void)
 }
 
 
-int do_migration(struct pte_callback_context_t *, int mode);
-int do_switch(struct pte_callback_context_t *);
+static int do_migration(struct pte_callback_context_t *, int mode);
+static int do_switch(struct pte_callback_context_t *);
 
 /**
  * returns number of migrated pages
  */
-u32 ambix_migrate_pages(struct pte_callback_context_t * ctx, int nr_pages, int mode)
+static u32 ambix_migrate_pages(struct pte_callback_context_t * ctx, int nr_pages, int mode)
 {
+    pr_debug("Ambix requested %d page migration\n", nr_pages);
     if (find_candidate_pages(ctx, nr_pages, mode)) {
+        pr_debug("No candidates were found\n");
         return 0;
     }
     switch (mode) {
@@ -981,7 +1028,7 @@ u32 ambix_migrate_pages(struct pte_callback_context_t * ctx, int nr_pages, int m
     return 0;
 }
 
-int do_switch(struct pte_callback_context_t * ctx)
+static int do_switch(struct pte_callback_context_t * ctx)
 {
     return 0;
 //    void **addr_dram = malloc(sizeof(unsigned long) * n_found);
@@ -1116,17 +1163,18 @@ struct migration_target_control {
     gfp_t gfp_mask;
 };
 
-int do_migration(struct pte_callback_context_t * ctx, int mode)
+static int do_migration(struct pte_callback_context_t * ctx, int mode)
 {
-    return 0;
 
     int err;
     struct migration_target_control mtc = {
         .nid = 0,
         .gfp_mask = GFP_HIGHUSER_MOVABLE | __GFP_THISNODE,
     };
-
     LIST_HEAD(pagelist);
+
+    return 0;
+
 
     err = g_migrate_pages(&pagelist, g_alloc_migration_target, NULL,
             (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
@@ -1135,7 +1183,7 @@ int do_migration(struct pte_callback_context_t * ctx, int mode)
     //    putback_movable_pages(pagelist);
     //return err;
 
-    return 0;
+    return err;
 // //    void **addr = malloc(sizeof(unsigned long) * n_found);
 // //    int *dest_nodes = malloc(sizeof(int) * n_found);
 // //    int *status = malloc(sizeof(int) * n_found);
