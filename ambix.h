@@ -43,11 +43,6 @@
 #define UNBIND_OP 2
 
 // Comm-related structures:
-typedef struct addr_info {
-    unsigned long addr;
-    int pid_retval; // Stores pid info for FIND operation and BIND/UNBIND ok/nok
-} addr_info_t;
-
 typedef struct req {
     int op_code;
     int pid_n; // Stores pid for BIND/UNBIND and the number of pages for FIND
