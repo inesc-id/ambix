@@ -34,7 +34,8 @@
 #include <linux/mmzone.h> // Contains conversion between pfn and node id (NUMA node)
 #include <linux/mm.h>
 #include <linux/huge_mm.h>
-
+#include <linux/mm_inline.h>
+#include <linux/mempolicy.h>
 #include <linux/string.h>
 
 #include "ambix.h"
@@ -49,13 +50,16 @@
 
 #define NVRAM_BW_THRESH 10
 
+#define MAX_N_FIND 131071U
+#define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
+#define PMM_MIXED 1
+
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
 static const int DRAM_NODES[] = {0};
 static const int NVRAM_NODES[] = {1}; // FIXME {2}
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
-
 
 int g_nr_pids = 0;
 struct task_struct ** g_task_items;
@@ -66,35 +70,16 @@ unsigned long g_last_addr_nvram = 0;
 int g_last_pid_dram = 0;
 int g_last_pid_nvram = 0;
 
-/* walk_page_range */
-typedef int (*walk_page_range_t)(
-        struct mm_struct *mm,
-        unsigned long start,
-        unsigned long end,
-        const struct mm_walk_ops *ops,
-        void *private);
-walk_page_range_t g_walk_page_range;
-
-typedef void (*si_meminfo_node_t)(struct sysinfo *val, int nid);
-si_meminfo_node_t g_si_meminfo_node;
+#define M(RET, NAME, SIGNATURE) \
+    typedef RET (*NAME ## _t) SIGNATURE; \
+    NAME ##_t g_ ##NAME
+#include "IMPORT.M"
+#undef M
 
 // == typedef struct page * (*alloc_migration_target_t)(
 // ==         struct page * page,
 // ==         unsigned long private);
 // == alloc_migration_target_t g_alloc_migration_target;
-
-typedef int (*isolate_lru_page_t)(struct page *page) ;
-isolate_lru_page_t g_isolate_lru_page;
-
-typedef int (*migrate_pages_t)(
-        struct list_head *l,
-        new_page_t new,
-        free_page_t free,
-        unsigned long private,
-        enum migrate_mode mode,
-        int reason);
-migrate_pages_t g_migrate_pages;
-
 
 typedef struct addr_info
 {
@@ -102,6 +87,17 @@ typedef struct addr_info
     size_t pid_idx;
 } addr_info_t;
 
+
+/**
+ * Can't import inline functions, have to duplicate:
+ */
+atomic_t * g_lru_disable_count;
+
+static inline bool my_lru_cache_disable(void)
+{ return atomic_read(g_lru_disable_count); }
+
+static inline void my_lru_cache_enable(void)
+{ atomic_dec(g_lru_disable_count); }
 
 /*
 -------------------------------------------------------------------------------
@@ -214,7 +210,7 @@ static int refresh_pids(void)
     }
 
     for(i = 0; i < g_nr_pids; ++i) {
-        pr_debug("Bound process idx:%d, pid:%d\n", i, g_task_items[i]->pid);
+        pr_debug("Bound process [%d] = %d\n", i, g_task_items[i]->pid);
     }
 
     return 0;
@@ -471,16 +467,16 @@ PAGE WALKERS
 */
 
 typedef int (*pte_entry_handler_t)(
-        pte_t *pte,
+        pte_t *,
         unsigned long addr,
         unsigned long next,
-        struct mm_walk *walk);
+        struct mm_walk *);
 
 static int do_page_walk(
         pte_entry_handler_t pte_handler,
         struct pte_callback_context_t * ctx,
-        int last_pid,
-        unsigned long last_addr)
+        const int last_pid,
+        const unsigned long last_addr)
 {
     struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_handler};
 
@@ -488,11 +484,17 @@ static int do_page_walk(
     unsigned long left = last_addr;
     unsigned long right = MAX_ADDRESS;
 
+    pr_debug("Page walk. Mode:%p; n:%d; last_pid:%d; last_addr:%p.\n",
+            pte_handler, ctx->n_to_find, last_pid, (void *) last_addr);
+
     // start at last_pid's last_addr, walk through all pids and finish by
     // addresses less than last_addr's last_pid; (i.e go twice through idx == last_pid)
     for (i = last_pid; i != last_pid + g_nr_pids + 1; ++i) {
         int idx = i % g_nr_pids;
         struct mm_struct *mm = g_task_items[idx]->mm;
+
+        pr_debug("Walk iteration [%d] {pid:%d; left:%p; right: %p}\n",
+                i, idx, (void *) left, (void *) right);
 
         ctx->curr_pid_idx = idx;
 
@@ -503,21 +505,26 @@ static int do_page_walk(
         }
 
         if (ctx->n_found >= ctx->n_to_find) {
+            pr_debug("Has found enough pages. Last pid is %d.", i);
             return i;
         }
 
         left = 0;
 
-        if (i != last_pid
-        && (i + 1) % g_nr_pids == last_pid) { // second run through last_pid
+        if ((i + 1) % g_nr_pids == last_pid) { // second run through last_pid
+            if (!last_addr) {
+                break; // first run has already covered all address range.
+            }
             right = last_addr + 1;
         }
     }
 
+    pr_debug("Page walk has been completed. Found %ld pages.\n", ctx->n_found);
+
     return last_pid;
 }
 
-int mem_walk(struct pte_callback_context_t * ctx, int n, int mode)
+int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
 {
     pte_entry_handler_t pte_handler;
     int * last_pid = &g_last_pid_nvram;
@@ -547,7 +554,7 @@ int mem_walk(struct pte_callback_context_t * ctx, int n, int mode)
         return -1;
     }
 
-    pr_debug("Memory walk{ mode:%d n:%d last_pid:%d last_addr:%p }\n",
+    pr_debug("Memory walk{mode:%d; n:%d; last_pid:%d; last_addr:%p;}\n",
             mode, n, *last_pid, (void *) *last_addr);
     *last_pid = do_page_walk(pte_handler, ctx, *last_pid, *last_addr);
     pr_debug("Memory walk complete {n_found:%d last_pid:%d last_addr:%p}\n",
@@ -781,9 +788,11 @@ int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int m
     case NVRAM_MODE:
     case NVRAM_WRITE_MODE:
     case NVRAM_INTENSIVE_MODE:
-        return mem_walk(ctx, min(n_pages, MAX_N_FIND), mode);
+        BUG_ON(n_pages > MAX_N_FIND);
+        return mem_walk(ctx, n_pages, mode);
     case SWITCH_MODE:
-        return switch_walk(ctx, min(n_pages, MAX_N_SWITCH));
+        BUG_ON(n_pages > MAX_N_SWITCH);
+        return switch_walk(ctx, n_pages);
     default:
         pr_info("Unrecognized mode.\n");
         return -1;
@@ -897,14 +906,14 @@ static u64 get_memory_total(enum pool_t pool)
     int i = 0;
     u64 totalram = 0;
     const int * nodes = get_pool_nodes(pool);
-    size_t size = get_pool_size(pool);
+    const size_t size = get_pool_size(pool);
     if (IS_ERR(nodes) || size == 0) return 0;
     for (i = 0; i < size; ++i) {
         struct sysinfo inf;
         g_si_meminfo_node(&inf, nodes[i]);
         totalram += inf.totalram;
     }
-    return K(totalram);
+    return totalram * PAGE_SIZE;
 }
 
 static u32 get_memory_free_pages(enum pool_t pool)
@@ -969,7 +978,16 @@ int ambix_check_memory(void)
 
                 n_bytes = (DRAM_USAGE_LIMIT - get_memory_usage(DRAM_POOL))
                                 * get_memory_total(DRAM_POOL) / USAGE_FACTOR;
+
+                //pr_debug("n_bytes:%lld, DRAM_USAGE_LIMIT: %lld; DRAM_USAGE: %lld; total:%lld; FACTOR:%lld\n",
+                //        n_bytes,
+                //        DRAM_USAGE_LIMIT,
+                //        get_memory_usage(DRAM_POOL),
+                //        get_memory_total(DRAM_POOL),
+                //        USAGE_FACTOR);
+
                 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
+
                 num = ambix_migrate_pages(ctx, n_pages, NVRAM_INTENSIVE_MODE);
                 if (num > 0) {
                     n_migrated += num;
@@ -1030,11 +1048,13 @@ static int do_switch(struct pte_callback_context_t *);
  */
 static u32 ambix_migrate_pages(struct pte_callback_context_t * ctx, int nr_pages, int mode)
 {
-    pr_debug("Ambix requested %d page migrations\n", nr_pages);
+    pr_debug("It was requested %d page migrations\n", nr_pages);
     if (find_candidate_pages(ctx, nr_pages, mode)) {
         pr_debug("No candidates were found\n");
         return 0;
     }
+    pr_debug("Found %d candidates\n", ctx->n_found);
+
     switch (mode) {
     case DRAM_MODE:
         return do_migration(ctx, DRAM_MODE);
@@ -1209,7 +1229,7 @@ static struct page *alloc_dst_page(
 // --     }
 // --     return newpage;
 // -- }
-//     nr_remaining = migrate_pages(&migratepages, *new, NULL, node,
+//     nr_remaining = g_migrate_pages(&migratepages, *new, NULL, node,
 //                          MIGRATE_ASYNC, MR_NUMA_MISPLACED);
 //
 // **--**        lru_cache_disable();
@@ -1299,12 +1319,12 @@ static int add_page_for_migration(
     mmap_read_lock(mm);
     err = -EFAULT;
     vma = find_vma(mm, addr);
-    if (!vma || addr < vma->vm_start || !vma_migratable(vma))
+    if (!vma || addr < vma->vm_start || !g_vma_migratable(vma))
         goto out;
 
     /* FOLL_DUMP to ignore special (like zero) pages */
     follflags = FOLL_GET | FOLL_DUMP;
-    page = follow_page(vma, addr, follflags);
+    page = g_follow_page(vma, addr, follflags);
 
     err = PTR_ERR(page);
     if (IS_ERR(page))
@@ -1321,7 +1341,7 @@ static int add_page_for_migration(
     err = -EACCES;
     if (PageHuge(page)) {
         if (PageHead(page)) {
-            isolate_huge_page(page, pagelist);
+            g_isolate_huge_page(page, pagelist);
             err = 1;
         }
     } else {
@@ -1361,8 +1381,10 @@ static int do_migration(struct pte_callback_context_t * ctx, int mode)
 
     LIST_HEAD(pagelist);
     const int * node_list;
+    int node;
     size_t n_nodes;
     size_t i;
+    int err = -EFAULT;
     if (mode == DRAM_MODE) {
         node_list = get_pool_nodes(NVRAM_POOL);
         n_nodes = get_pool_size(NVRAM_POOL);
@@ -1373,38 +1395,37 @@ static int do_migration(struct pte_callback_context_t * ctx, int mode)
     }
 
     //for (i = 0; i < n_nodes; ++i) {
-    node = nodes_list[0]; //FIXME: we need to pick nodes dynamically, relaying on space availability
+    node = node_list[0]; //FIXME: we need to pick nodes dynamically, relaying on space availability
     if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
         pr_err("Invalid node %d", node);
         return 0;
     }
 
-    lru_cache_disable();
+    my_lru_cache_disable();
     for (i = 0; i < ctx->n_found; ++i) {
-        int err = -EFAULT;
         unsigned long addr = (unsigned long)untagged_addr(ctx->found_addrs[i].addr);
         size_t idx = ctx->found_addrs[i].pid_idx;
         struct mm_struct * mm = g_task_items[idx]->mm;
-
-        err = add_page_for_migration(mm, addr, node);
+        err = add_page_for_migration(mm, addr, node, &pagelist);
         if (err > 0)
             /*Page is successfully queued for migration*/
             continue;
 
         break;
     }
-    lru_cache_enable();
+    my_lru_cache_enable();
 
-    if (list_empty(pagelist))
+    if (list_empty(&pagelist))
         return 0;
 
-    err = migrate_pages(&pagelist, alloc_dst_page, NULL,
+    err = g_migrate_pages(&pagelist, alloc_dst_page, NULL,
             (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
     if (err) {
-        putback_movable_pages(pagelist);
+        g_putback_movable_pages(&pagelist);
     }
     else {
         err = i;
+    }
 
     return err;
     // == err = g_migrate_pages(&pagelist, g_alloc_migration_target, NULL,
@@ -1428,21 +1449,18 @@ int ambix_init(void)
     //backup_addrs = kmalloc(sizeof(addr_info_t) * MAX_N_FIND, GFP_KERNEL);
     //switch_backup_addrs = kmalloc(sizeof(addr_info_t) * MAX_N_SWITCH, GFP_KERNEL);
 
-    if (!(g_walk_page_range = (walk_page_range_t)
-        the_kallsyms_lookup_name("walk_page_range"))) {
-        pr_err("Can't lookup 'walk_page_range' function.");
-        return -1;
-    }
+    #define M(RET, NAME, SIGNATURE) \
+        if (!(g_ ## NAME = (NAME ##_t)\
+                the_kallsyms_lookup_name(#NAME))) { \
+            pr_err("Can't lookup '" #NAME "' function."); \
+            return -1; \
+        }
+        #include "IMPORT.M"
+    #undef M
 
-    if (!(g_si_meminfo_node = (si_meminfo_node_t)
-        the_kallsyms_lookup_name("si_meminfo_node"))) {
-        pr_err("Can't lookup 'si_meminfo_node' function.");
-        return -1;
-    }
-
-    if (!(g_isolate_lru_page = (isolate_lru_page_t)
-        the_kallsyms_lookup_name("isolate_lru_page"))) {
-        pr_err("Can't lookup 'isolate_lru_page' function.");
+    if (!(g_lru_disable_count = (atomic_t *)
+        the_kallsyms_lookup_name("lru_disable_count"))) {
+        pr_err("Can't lookup 'lru_disable_count' variable.");
         return -1;
     }
 
@@ -1452,16 +1470,12 @@ int ambix_init(void)
     // ==     return -1;
     // == }
 
-    if (!(g_migrate_pages = (migrate_pages_t)
-        the_kallsyms_lookup_name("migrate_pages"))) {
-        pr_err("Can't lookup 'migrate_pages' function.");
-        return -1;
-    }
 
     return 0;
 }
 
-void ambix_cleanup(void) {
+void ambix_cleanup(void)
+{
     pr_info("Cleaning up\n");
     // -- netlink_kernel_release(nl_sock);
 

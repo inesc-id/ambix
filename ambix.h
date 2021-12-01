@@ -21,10 +21,8 @@
 #define SWITCH_MODE 3
 #define NVRAM_CLEAR 4
 #define NVRAM_WRITE_MODE 5
-#define MAX_N_FIND 131071U
-#define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
-#define PMM_MIXED 1
-
+//#define MAX_N_FIND 131071U
+//##define MAX_N_FIND 512U*1024*1024
 
 // Netlink:
 #define NETLINK_USER 31

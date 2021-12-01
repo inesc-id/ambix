@@ -40,4 +40,10 @@ run:
 	@echo enable > /proc/hello
 	@watch cat /proc/hello
 
+run.all:
+	@make -s
+	@make -s insmod  || /bin/true
+	@make -s -C ../memx run NUMACTL='-m1'
+	@make -s rmmod  || /bin/true
+
 .PHONY: insmod rmmod
