@@ -56,7 +56,7 @@ static ssize_t hello_proc_write(
 //    if (count > LED_MAX_LENGTH)
 //        count = LED_MAX_LENGTH;
 //
-    pr_info("proc_write\n");
+    //pr_info("proc_write\n");
     buf = memdup_user_nul(buffer, count);
     if (IS_ERR(buf))
         return PTR_ERR(buf);

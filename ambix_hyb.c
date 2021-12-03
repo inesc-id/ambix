@@ -210,7 +210,7 @@ static int refresh_pids(void)
     }
 
     for(i = 0; i < g_nr_pids; ++i) {
-        pr_debug("Bound process [%d] = %d\n", i, g_task_items[i]->pid);
+        pr_debug("Bound process: [%d]%d\n", i, g_task_items[i]->pid);
     }
 
     return 0;
@@ -247,6 +247,7 @@ static int pte_callback_dram(
     pte_t old_pte;
     // If found all, save last addr
     if (ctx->n_found == ctx->n_to_find) {
+        pr_debug("Dram callback: found enough pages, storing last addr %lx\n", addr);
         g_last_addr_dram = addr;
         return 1;
     }
@@ -519,7 +520,7 @@ static int do_page_walk(
         }
     }
 
-    pr_debug("Page walk has been completed. Found %ld pages.\n", ctx->n_found);
+    pr_debug("Page walk has been completed. Found %u pages.\n", ctx->n_found);
 
     return last_pid;
 }
@@ -554,17 +555,18 @@ int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
         return -1;
     }
 
-    pr_debug("Memory walk{mode:%d; n:%d; last_pid:%d; last_addr:%p;}\n",
-            mode, n, *last_pid, (void *) *last_addr);
+    //pr_debug("Memory walk {mode:%d; n:%d; last_pid:%d; last_addr:%p;}\n",
+    //        mode, n, *last_pid, (void *) *last_addr);
     *last_pid = do_page_walk(pte_handler, ctx, *last_pid, *last_addr);
-    pr_debug("Memory walk complete {n_found:%d last_pid:%d last_addr:%p}\n",
-            ctx->n_found, *last_pid, (void *) *last_addr);
+    pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d last_addr:%lx}\n",
+            ctx->n_found, ctx->n_backup, *last_pid, (unsigned long)last_addr);
 
     if (ctx->n_found < ctx->n_to_find
     && (ctx->n_backup > 0)) {
-        int i;
+        unsigned i = 0;
         int remaining = ctx->n_to_find - ctx->n_found;
-        for (i = 0; (i < remaining) && (i < ctx->n_backup); ++i) {
+        pr_debug("Using backup addresses (require %u, has %d)\n", remaining, ctx->n_backup);
+        for (i = 0; (i < ctx->n_backup && i < remaining); ++i) {
             ctx->found_addrs[ctx->n_found].addr = ctx->backup_addrs[i].addr;
             ctx->found_addrs[ctx->n_found].pid_idx = ctx->backup_addrs[i].pid_idx;
             ++ctx->n_found;
@@ -916,20 +918,20 @@ static u64 get_memory_total(enum pool_t pool)
     return totalram * PAGE_SIZE;
 }
 
-static u32 get_memory_free_pages(enum pool_t pool)
-{
-    int i = 0;
-    u64 freeram = 0;
-    const int * nodes = get_pool_nodes(pool);
-    size_t size = get_pool_size(pool);
-    if (IS_ERR(nodes) || size == 0) return 0;
-    for (i = 0; i < size; ++i) {
-        struct sysinfo inf;
-        g_si_meminfo_node(&inf, nodes[i]);
-        freeram += inf.freeram;
-    }
-    return freeram / PAGE_SIZE;
-}
+//static u32 get_memory_free_pages(enum pool_t pool)
+//{
+//    int i = 0;
+//    u64 freeram = 0;
+//    const int * nodes = get_pool_nodes(pool);
+//    size_t size = get_pool_size(pool);
+//    if (IS_ERR(nodes) || size == 0) return 0;
+//    for (i = 0; i < size; ++i) {
+//        struct sysinfo inf;
+//        g_si_meminfo_node(&inf, nodes[i]);
+//        freeram += inf.freeram;
+//    }
+//    return freeram / PAGE_SIZE;
+//}
 
 int g_switch_act = 1;
 int g_thresh_act = 1;
@@ -1000,7 +1002,7 @@ int ambix_check_memory(void)
                 num = ambix_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
                 if (num > 0) {
                     n_migrated += num;
-                    pr_debug("DRAM<->NVRAM: Switched %d pages.\n", num);
+                    pr_debug("DRAM<->NVRAM: Switched %d out of %d pages.\n", num, 2 * MAX_N_SWITCH);
                 }
             }
         }
@@ -1046,7 +1048,10 @@ static int do_switch(struct pte_callback_context_t *);
 /**
  * returns number of migrated pages
  */
-static u32 ambix_migrate_pages(struct pte_callback_context_t * ctx, int nr_pages, int mode)
+static u32 ambix_migrate_pages(
+        struct pte_callback_context_t * ctx,
+        const int nr_pages,
+        const int mode)
 {
     pr_debug("It was requested %d page migrations\n", nr_pages);
     if (find_candidate_pages(ctx, nr_pages, mode)) {
@@ -1373,12 +1378,6 @@ out:
 
 static int do_migration(struct pte_callback_context_t * ctx, int mode)
 {
-
-    // == struct migration_target_control mtc = {
-    // ==     .nid = 0,
-    // ==     .gfp_mask = GFP_HIGHUSER_MOVABLE | __GFP_THISNODE,
-    // == };
-
     LIST_HEAD(pagelist);
     const int * node_list;
     int node;
@@ -1413,23 +1412,24 @@ static int do_migration(struct pte_callback_context_t * ctx, int mode)
 
         break;
     }
-    my_lru_cache_enable();
 
-    if (list_empty(&pagelist))
-        return 0;
+    if (list_empty(&pagelist)) {
+        err = 0;
+        goto out;
+    }
 
     err = g_migrate_pages(&pagelist, alloc_dst_page, NULL,
             (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
     if (err) {
+        err = i - err;
         g_putback_movable_pages(&pagelist);
+        goto out;
     }
-    else {
-        err = i;
-    }
+    err = i;
 
+out:
+    my_lru_cache_enable();
     return err;
-    // == err = g_migrate_pages(&pagelist, g_alloc_migration_target, NULL,
-    // ==         (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
 }
 
 /*
