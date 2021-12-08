@@ -20,3 +20,8 @@ M(struct page *, follow_page, (
 M(int, isolate_lru_page, (struct page *page));
 M(bool, isolate_huge_page, (struct page *page, struct list_head *list));
 M(bool, vma_migratable, (struct vm_area_struct *vma));
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
+#else
+    M(void, lru_add_drain_all, (void));
+#endif

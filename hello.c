@@ -5,7 +5,7 @@
 #include <linux/jiffies.h>
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>   /* Needed for KERN_INFO */
-#include <linux/kstrtox.h>
+//#include <linux/kstrtox.h>
 #include <linux/mm.h>
 #include <linux/module.h>   /* Needed by all modules */
 #include <linux/pid.h>
@@ -27,7 +27,7 @@ MODULE_VERSION("0.10");
  * This function is called for each "step" of a sequence
  *
  */
-static int hello_show(struct seq_file *s, void *)
+static int hello_show(struct seq_file *s, void * private)
 {
     size_t i;
 
@@ -111,7 +111,7 @@ static ssize_t hello_proc_write(
     return rc;
 }
 
-static int hello_proc_open(struct inode *, struct file *file)
+static int hello_proc_open(struct inode * node, struct file *file)
 {
     return single_open(file, hello_show, NULL);
 };
@@ -127,7 +127,7 @@ static const struct proc_ops hello_proc_ops = {
 // ---------------------------------------------------------------------------------
 static struct timer_list g_timer;
 static unsigned g_time_interval = 5000;
-void tmr_handle(struct timer_list *)
+void tmr_handle(struct timer_list * tmr)
 {
     ambix_check_memory();
     mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));

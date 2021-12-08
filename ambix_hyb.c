@@ -11,6 +11,8 @@
 #define DEBUG
 #define pr_fmt(fmt) "hello.PLACEMENT: " fmt
 
+#include <linux/version.h>
+#include <generated/utsrelease.h>
 #include <linux/delay.h>
 #include <linux/init.h>  // Macros used to mark up functions e.g., __init __exit
 #include <linux/kernel.h>  // Contains types, macros, functions for the kernel
@@ -29,13 +31,14 @@
 #include <linux/gfp.h>
 #include <linux/uaccess.h>
 #include <linux/migrate.h>
+#include <linux/swap.h>
 
-#include <linux/pagewalk.h>
-#include <linux/mmzone.h> // Contains conversion between pfn and node id (NUMA node)
-#include <linux/mm.h>
 #include <linux/huge_mm.h>
-#include <linux/mm_inline.h>
 #include <linux/mempolicy.h>
+#include <linux/mm.h>
+#include <linux/mm_inline.h>
+#include <linux/mmzone.h> // Contains conversion between pfn and node id (NUMA node)
+#include <linux/pagewalk.h>
 #include <linux/string.h>
 
 #include "ambix.h"
@@ -88,16 +91,29 @@ typedef struct addr_info
 } addr_info_t;
 
 
-/**
- * Can't import inline functions, have to duplicate:
- */
-atomic_t * g_lru_disable_count;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
+    /**
+     * Can't import inline functions, have to duplicate:
+     */
+    atomic_t * g_lru_disable_count;
 
-static inline bool my_lru_cache_disable(void)
-{ return atomic_read(g_lru_disable_count); }
+    static inline bool my_lru_cache_disable(void)
+    { return atomic_read(g_lru_disable_count); }
 
-static inline void my_lru_cache_enable(void)
-{ atomic_dec(g_lru_disable_count); }
+    static inline void my_lru_cache_enable(void)
+    { atomic_dec(g_lru_disable_count); }
+#else
+    static inline bool my_lru_cache_disable(void) {
+        g_lru_add_drain_all();
+        return true;
+    }
+    static inline void my_lru_cache_enable(void) {}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,19)
+#define thp_nr_pages(head) hpage_nr_pages(head)
+#endif
+
 
 /*
 -------------------------------------------------------------------------------
@@ -1400,6 +1416,7 @@ static int do_migration(struct pte_callback_context_t * ctx, int mode)
         return 0;
     }
 
+
     my_lru_cache_disable();
     for (i = 0; i < ctx->n_found; ++i) {
         unsigned long addr = (unsigned long)untagged_addr(ctx->found_addrs[i].addr);
@@ -1458,11 +1475,13 @@ int ambix_init(void)
         #include "IMPORT.M"
     #undef M
 
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
     if (!(g_lru_disable_count = (atomic_t *)
         the_kallsyms_lookup_name("lru_disable_count"))) {
         pr_err("Can't lookup 'lru_disable_count' variable.");
         return -1;
     }
+    #endif
 
     // == if (!(g_alloc_migration_target = (alloc_migration_target_t)
     // ==     the_kallsyms_lookup_name("alloc_migration_target"))) {
