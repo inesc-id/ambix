@@ -23,24 +23,49 @@ MODULE_AUTHOR("Ilia Kuzmin");
 MODULE_DESCRIPTION("Bandwidth-aware page replacement; Ambix successor");
 MODULE_VERSION("0.10");
 
+static bool g_show_aggregates = true;
+
 /**
  * This function is called for each "step" of a sequence
  *
  */
 static int hello_show(struct seq_file *s, void * private)
 {
-    size_t i;
-
-    pr_info("seq_show\n");
-
-    for (i = 0; i < EVENTs_size; ++i) {
-        u64 value, time;
-        bool enabled = perf_counters_read_change(i, &value, &time);
-        seq_printf(s, "%ld: enabled:%s; dv:%lld; dt:%lld;\n", i,
-                 enabled ? "T" : "F",
-                 value * 64 / 1024 / 1024, time);
+    //pr_debug("Show\n");
+    if (g_show_aggregates) {
+        const u64
+            pmm_reads = perf_counters_pmm_reads(),
+            pmm_writes = perf_counters_pmm_writes(),
+            ddr_reads = perf_counters_ddr_reads(),
+            ddr_writes = perf_counters_ddr_writes();
+        seq_printf(s,
+                "PMM READS: %lld Mb/s\n"
+                "PMM WRITES: %lld Mb/s\n"
+                "DDR READS: %lld Mb/s\n"
+                "DDR WRITES: %lld Mb/s\n"
+                "PMM BW: %lld Mb/s\n"
+                "DDR BW: %lld Mb/s\n" ,
+                    pmm_reads,
+                    pmm_writes,
+                    ddr_reads,
+                    ddr_writes,
+                    pmm_reads + pmm_writes,
+                    ddr_reads + ddr_writes);
     }
-
+    else {
+        size_t i;
+        for (i = 0; i < EVENTs_size; ++i) {
+            u64 value, time;
+            bool enabled = perf_counters_read_change(i, &value, &time);
+            struct counter_t * const info = perf_counters_info(i);
+            seq_printf(s, "%ld:%s e:%s; dv:%lld %s; dt:%lld;\n",
+                    i, info->name,
+                    enabled ? "T" : "F",
+                    value / jiffies_to_sec(time) * info->mult / info->fact,
+                    info->unit,
+                    jiffies_to_sec(time));
+        }
+    }
     return 0;
 }
 
@@ -162,16 +187,12 @@ int init_module(void)
         return rc;
     }
 
-    pr_info("walk_page_range address = 0x%lx\n", the_kallsyms_lookup_name("walk_page_range"));
+    //pr_info("walk_page_range address = 0x%lx\n", the_kallsyms_lookup_name("walk_page_range"));
 
-    //test = kallsyms_lookup_name("walk_page_range");
-    //remap_pfn_range
-    //printk(KERN_INFO "initialization %ld; %p\n", test, &proc_create);
-    //FIXME:
-    //FIXME: -- if ((rc = perf_counters_init())) {
-    //FIXME: --     pr_warn("PCM initialization failed");
-    //FIXME: --     return rc;
-    //FIXME: -- }
+    if ((rc = perf_counters_init())) {
+        pr_warn("PCM initialization failed");
+        return rc;
+    }
 
     if ((rc = ambix_init())) {
         pr_warn("Ambix initialization failed");
@@ -197,7 +218,7 @@ void cleanup_module(void)
     tmr_cleanup();
     remove_proc_entry(PROC_NAME, NULL);
     ambix_cleanup();
-    // FIXME: perf_counters_disable();
-    // FIXME: perf_counters_cleanup();
+    perf_counters_disable();
+    perf_counters_cleanup();
 }
 

@@ -110,8 +110,8 @@ typedef struct addr_info
     static inline void my_lru_cache_enable(void) {}
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,19)
-#define thp_nr_pages(head) hpage_nr_pages(head)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,6)
+#define thp_nr_pages(head) hpage_nr_pages(head);
 #endif
 
 
@@ -980,7 +980,7 @@ int ambix_check_memory(void)
     if (g_switch_act) {
         u64 pmm_bw = 0;
         if (PMM_MIXED) {
-            pmm_bw = perf_counters_pmm_bw();
+            pmm_bw = perf_counters_pmm_writes() + perf_counters_pmm_reads();
         }
         else {
             pmm_bw = perf_counters_pmm_writes();
@@ -1378,6 +1378,7 @@ static int add_page_for_migration(
         mod_node_page_state(page_pgdat(head),
             NR_ISOLATED_ANON + page_is_file_lru(head),
             thp_nr_pages(head));
+            //hpage_nr_pages(head));
     }
 out_putpage:
     /*
