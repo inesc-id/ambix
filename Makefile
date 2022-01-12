@@ -1,5 +1,5 @@
 obj-m += kmod.o
-kmod-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix_hyb.o
+kmod-objs := hello.o find_kallsyms_lookup_name.o perf_counters.o ambix.o
 
 export DEBUG = YES
 #export CONFIG_DYNAMIC_DEBUG ?= YES
