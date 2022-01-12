@@ -111,7 +111,7 @@ typedef struct addr_info
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,6)
-#define thp_nr_pages(head) hpage_nr_pages(head);
+#define thp_nr_pages(head) hpage_nr_pages(head)
 #endif
 
 
@@ -599,7 +599,6 @@ static int pte_callback_nvram_clear(
         unsigned long next,
         struct mm_walk *walk)
 {
-
     pte_t old_pte;
     // If  page is not present, write protected, or page is not in NVRAM node
     if ((ptep == NULL)
@@ -627,8 +626,8 @@ static int clear_nvram_ptes(struct pte_callback_context_t * ctx)
 
     for (i = 0; i < g_nr_pids; i++) {
         mm = g_task_items[i]->mm;
-        spin_lock(&mm->page_table_lock);
         ctx->curr_pid_idx = i;
+        spin_lock(&mm->page_table_lock);
         g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
         spin_unlock(&mm->page_table_lock);
     }
@@ -819,69 +818,11 @@ int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int m
 }
 
 
-// -- static void placement_nl_process_msg(struct sk_buff *skb) {
-// --     struct nlmsghdr *nlmh;
-// --     int sender_pid;
-// --     struct sk_buff *skb_out;
-// --     req_t *in_req;
-// --     int res;
-// -- 
-// --     printk("Received message.\n");
-// -- 
-// --     // input
-// --     nlmh = (struct nlmsghdr *) skb->data;
-// -- 
-// --     in_req = (req_t *) NLMSG_DATA(nlmh);
-// --     sender_pid = nlmh->nlmsg_pid;
-// -- 
-// --     process_req(in_req);
-// -- 
-// -- 
-// --     // Calculate size of the last netlink packet
-// --     int last_packet_remainder = n_found % MAX_N_PER_PACKET;
-// --     int last_packet_entries = last_packet_remainder;
-// --     if (last_packet_remainder == 0) {
-// --         last_packet_entries = MAX_N_PER_PACKET;
-// --     }
-// -- 
-// --     int required_packets = (n_found / MAX_N_PER_PACKET) + (last_packet_remainder != 0);
-// --     skb_out = nlmsg_new(NLMSG_LENGTH(MAX_PAYLOAD) * required_packets, GFP_KERNEL);
-// --     if (!skb_out) {
-// --         pr_err("Failed to allocate new skb.\n");
-// --         return;
-// --     }
-// -- 
-// --     int i;
-// -- 
-// --     for (i=0; i < required_packets-1; i++) { // process all but last packet
-// --         nlmh_array[i] = nlmsg_put(skb_out, 0, 0, 0, MAX_N_PER_PACKET * sizeof(addr_info_t), NLM_F_MULTI);
-// --         memset(NLMSG_DATA(nlmh_array[i]), 0, MAX_PAYLOAD);
-// --         memcpy(NLMSG_DATA(nlmh_array[i]), found_addrs + i*MAX_N_PER_PACKET, MAX_PAYLOAD);
-// --     }
-// --     int rem_size = last_packet_entries * sizeof(addr_info_t);
-// -- 
-// --     nlmh_array[i] = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, rem_size, 0);
-// --     memset(NLMSG_DATA(nlmh_array[i]), 0, rem_size);
-// --     memcpy(NLMSG_DATA(nlmh_array[i]), found_addrs + i*MAX_N_PER_PACKET, rem_size);
-// -- 
-// --     NETLINK_CB(skb_out).dst_group = 0; // unicast
-// -- 
-// --     if (n_found == 1) {
-// --         pr_info("Sending %d entry to ctl.\n", n_found);
-// --     }
-// --     else {
-// --         pr_info("Sending %d entries to ctl in %d packets.\n", n_found, required_packets);
-// --     }
-// --     if ((res = nlmsg_unicast(nl_sock, skb_out, sender_pid)) < 0) {
-// --             pr_info("Error sending response to ctl.\n");
-// --     }
-// -- }
-//
 
 enum pool_t { DRAM_POOL, NVRAM_POOL };
 
 #define K(x) ((x) << (PAGE_SHIFT - 10))
-static const int * get_pool_nodes(enum pool_t pool)
+static const int * get_pool_nodes(const enum pool_t pool)
 {
     switch (pool) {
     case DRAM_POOL: return DRAM_NODES;
@@ -932,6 +873,13 @@ static u64 get_memory_total(enum pool_t pool)
         totalram += inf.totalram;
     }
     return totalram * PAGE_SIZE;
+}
+
+static u64 get_node_total_pages(const int node)
+{
+    struct sysinfo inf;
+    g_si_meminfo_node(&inf, node);
+    return inf.totalram;
 }
 
 //static u32 get_memory_free_pages(enum pool_t pool)
@@ -1058,8 +1006,24 @@ int ambix_check_memory(void)
 }
 
 
-static int do_migration(struct pte_callback_context_t *, int mode);
-static int do_switch(struct pte_callback_context_t *);
+static int do_migration(
+        const addr_info_t found_addrs[],
+        size_t n_found,
+        enum pool_t destination);
+
+static int do_switch(
+        const addr_info_t found_addrs[],
+        const size_t n_found)
+{
+    u32 sep;
+    for (sep = 0; sep < n_found && found_addrs[sep].pid_idx > 0; ++sep);
+    if (sep == n_found) {
+        pr_debug("Can't find separator");
+        return 0;
+    }
+    return do_migration(found_addrs, sep, NVRAM_POOL);
+         + do_migration(found_addrs + sep + 1, n_found - sep - 1, DRAM_POOL);
+}
 
 /**
  * returns number of migrated pages
@@ -1074,148 +1038,20 @@ static u32 ambix_migrate_pages(
         pr_debug("No candidates were found\n");
         return 0;
     }
+
     pr_debug("Found %d candidates\n", ctx->n_found);
 
     switch (mode) {
     case DRAM_MODE:
-        return do_migration(ctx, DRAM_MODE);
+        return do_migration(ctx->found_addrs, ctx->n_found, NVRAM_POOL);
     case NVRAM_MODE:
-    case NVRAM_INTENSIVE_MODE:
     case NVRAM_WRITE_MODE:
-        return do_migration(ctx, NVRAM_MODE);
+    case NVRAM_INTENSIVE_MODE:
+        return do_migration(ctx->found_addrs, ctx->n_found, DRAM_POOL);
     case SWITCH_MODE:
-        return do_switch(ctx);
+        return do_switch(ctx->found_addrs, ctx->n_found);
     }
     return 0;
-}
-
-static int do_switch(struct pte_callback_context_t * ctx)
-{
-    return 0;
-//    void **addr_dram = malloc(sizeof(unsigned long) * n_found);
-//    int *dest_nodes_dram = malloc(sizeof(int) * n_found);
-//    void **addr_nvram = malloc(sizeof(unsigned long) * n_found);
-//    int *dest_nodes_nvram = malloc(sizeof(int) * n_found);
-//    int *status = malloc(sizeof(int) * n_found);
-//
-//    for (int i=0; i < n_found; i++) {
-//        status[i] = -123;
-//    }
-//
-//    int dram_migrated = 0;
-//    int nvram_migrated = 0;
-//    int dram_e = 0; // counts failed migrations
-//    int nvram_e = 0; // counts failed migrations
-//
-//    int dram_free = 1;
-//    int nvram_free = 1;
-//
-//    while ((((dram_migrated + dram_e) < n_found) || ((nvram_migrated + nvram_e) < n_found)) && (dram_free || nvram_free)) {
-//        // DRAM -> NVRAM
-//        int old_n_processed = dram_migrated + dram_e;
-//        int dram_processed = old_n_processed;
-//
-//        for (int i=0; (i < n_nvram_nodes) && (dram_processed < n_found); i++) {
-//            int curr_node = NVRAM_NODES[i];
-//
-//            long long node_fr = 0;
-//            numa_node_size64(curr_node, &node_fr);
-//            int n_avail_pages = node_fr / page_size;
-//
-//            int j=0;
-//            for (; (j < n_avail_pages) && (j+dram_processed < n_found); j++) {
-//                addr_dram[dram_processed+j] = (void *) candidates[n_found+1+j].addr;
-//                dest_nodes_nvram[dram_processed+j] = curr_node;
-//            }
-//
-//            dram_processed += j;
-//        }
-//        if (old_n_processed < dram_processed) {
-//            // Send processed pages to NVRAM
-//            int n_migrated, i;
-//            dram_free = 1;
-//
-//            for (n_migrated=0, i=0; n_migrated < dram_processed; n_migrated+=i) {
-//                int curr_pid_idx;
-//                curr_pid_idx = candidates[n_found+1+n_migrated].pid_idx;
-//
-//                for (i=1; (candidates[n_found+1+n_migrated+i].pid_idx == curr_pid_idx) && (n_migrated+i < dram_processed); i++);
-//                void **addr_displacement = addr_dram + n_migrated;
-//                int *dest_nodes_displacement = dest_nodes_nvram + n_migrated;
-//                if (numa_move_pages(curr_pid_idx, (unsigned long) i, addr_displacement, dest_nodes_displacement, status, 0)) {
-//                    // Migrate all and output addresses that could not migrate
-//                    for (int j=0; j < i; j++) {
-//                        if (numa_move_pages(curr_pid_idx, 1, addr_displacement + j, dest_nodes_displacement + j, status, 0)) {
-//                            printf("Error migrating DRAM/MEM addr: %ld, pid: %d\n", (unsigned long) *(addr_displacement + j), curr_pid_idx);
-//                            dram_e++;
-//                        }
-//                    }
-//                }
-//            }
-//        }
-//        else {
-//            dram_free = 0;
-//        }
-//
-//        dram_migrated = dram_processed - dram_e;
-//
-//        // NVRAM -> DRAM
-//        old_n_processed = nvram_migrated + nvram_e;
-//        int nvram_processed = old_n_processed;
-//
-//        for (int i=0; (i < n_dram_nodes) && (nvram_processed < n_found); i++) {
-//            int curr_node = DRAM_NODES[i];
-//
-//            long long node_fr = 0;
-//            numa_node_size64(curr_node, &node_fr);
-//            int n_avail_pages = node_fr / page_size;
-//
-//            int j=0;
-//            for (; (j < n_avail_pages) && (j+nvram_processed < n_found); j++) {
-//                addr_nvram[nvram_processed+j] = (void *) candidates[nvram_processed+j].addr;
-//                dest_nodes_dram[nvram_processed+j] = curr_node;
-//            }
-//
-//            nvram_processed += j;
-//        }
-//
-//        if (old_n_processed < nvram_processed) {
-//            // Send processed pages to DRAM
-//            int n_migrated, i;
-//            nvram_free = 1;
-//
-//            for (n_migrated=0, i=0; n_migrated < nvram_processed; n_migrated+=i) {
-//                int curr_pid_idx;
-//                curr_pid_idx=candidates[n_migrated].pid_idx;
-//
-//                for (i=1; (candidates[n_migrated+i].pid_idx == curr_pid_idx) && (n_migrated+i < nvram_processed); i++);
-//                void **addr_displacement = addr_nvram + n_migrated;
-//                int *dest_nodes_displacement = dest_nodes_dram + n_migrated;
-//                if (numa_move_pages(curr_pid_idx, (unsigned long) i, addr_displacement, dest_nodes_displacement, status, 0)) {
-//                    // Migrate all and output addresses that could not migrate
-//                    for (int j=0; j < i; j++) {
-//                        if (numa_move_pages(curr_pid_idx, 1, addr_displacement + j, dest_nodes_displacement + j, status, 0)) {
-//                            printf("Error migrating NVRAM addr: %ld, pid: %d\n", (unsigned long) *(addr_displacement + j), curr_pid_idx);
-//                            nvram_e++;
-//                        }
-//                    }
-//                }
-//            }
-//        }
-//        else {
-//            nvram_free = 0;
-//        }
-//
-//        nvram_migrated = nvram_processed - nvram_e;
-//    }
-//
-//    free(addr_dram);
-//    free(addr_nvram);
-//    free(dest_nodes_dram);
-//    free(dest_nodes_nvram);
-//    free(status);
-//
-//    return dram_migrated + nvram_migrated;
 }
 
 static struct page *alloc_dst_page(
@@ -1233,89 +1069,6 @@ static struct page *alloc_dst_page(
 
     return newpage;
 }
-// -- 
-// -- static struct page *alloc_dst_page_thp(
-// --         struct page *page,
-// --         unsigned long data)
-// -- {
-// --     int nid = (int) data;
-// --     struct page *newpage;
-// -- 
-// --     newpage = alloc_pages_node(nid,
-// --             (GFP_TRANSHUGE_LIGHT |
-// --              __GFP_THISNODE),
-// --             HPAGE_PMD_ORDER);
-// --     if (newpage) {
-// --         prep_transhuge_page(newpage);
-// --     }
-// --     return newpage;
-// -- }
-//     nr_remaining = g_migrate_pages(&migratepages, *new, NULL, node,
-//                          MIGRATE_ASYNC, MR_NUMA_MISPLACED);
-//
-// **--**        lru_cache_disable();
-// **--**        for (i = 0; i < ctx->n_found; ++i) {
-// **--**            int err = -EFAULT;
-// **--**            unsigned long addr = ctx->found_addrs[i].addr;
-// **--**            size_t idx = ctx->found_addrs[i].pid_idx;
-// **--**            struct mm_struct * mm = g_task_items[idx]->mm;
-// **--**            mmap_read_lock(mm);
-// **--**
-// **--**            unsigned int follflags;
-// **--**
-// **--**            struct vm_area_struct * vma = find_vma(mm, addr);
-// **--**            if (!vma || addr < vma->vm_start || !vma_migratable(vma))
-// **--**                break;
-// **--**
-// **--**            /* FOLL_DUMP to ignore special (like zero) pages */
-// **--**            follflags = FOLL_GET | FOLL_DUMP;
-// **--**            page = follow_page(vma, addr, follflags);
-// **--**
-// **--**            err = PTR_ERR(page);
-// **--**            if (IS_ERR(page))
-// **--**                break;
-// **--**
-// **--**            err = -ENOENT;
-// **--**            if (!page)
-// **--**                break;
-// **--**
-// **--**            err = 0;
-// **--**            if (page_to_nid(page) == node) {
-// **--**                put_page(page);
-// **--**                break;
-// **--**            }
-// **--**
-// **--**            err = -EACCES;
-// **--**            if (page_mapcount(page) > 1 && !migrate_all)
-// **--**                goto out_putpage;
-// **--**
-// **--**            if (PageHuge(page)) {
-// **--**                if (PageHead(page)) {
-// **--**                    isolate_huge_page(page, pagelist);
-// **--**                    err = 1;
-// **--**                }
-// **--**            } else {
-// **--**                struct page *head;
-// **--**
-// **--**                head = compound_head(page);
-// **--**                err = isolate_lru_page(head);
-// **--**                if (err)
-// **--**                    goto out_putpage;
-// **--**
-// **--**                err = 1;
-// **--**                list_add_tail(&head->lru, pagelist);
-// **--**                mod_node_page_state(page_pgdat(head),
-// **--**                        NR_ISOLATED_ANON + page_is_file_lru(head),
-// **--**                        thp_nr_pages(head));
-// **--**            }
-// **--**
-// **--**        out_putpage:
-// **--**            put_page(page);
-// **--**        out:
-// **--**            mmap_read_unlock(mm);
-// **--**        }
-// **--**        lru_cache_enable();
-
 /*
  * Resolves the given address to a struct page, isolates it from the LRU and
  * puts it to the given pagelist.
@@ -1378,7 +1131,6 @@ static int add_page_for_migration(
         mod_node_page_state(page_pgdat(head),
             NR_ISOLATED_ANON + page_is_file_lru(head),
             thp_nr_pages(head));
-            //hpage_nr_pages(head));
     }
 out_putpage:
     /*
@@ -1392,36 +1144,28 @@ out:
     return err;
 }
 
-
-static int do_migration(struct pte_callback_context_t * ctx, int mode)
+static int do_migration(
+        const addr_info_t * const found_addrs,
+        const size_t n_found,
+        const enum pool_t dst)
 {
     LIST_HEAD(pagelist);
-    const int * node_list;
-    int node;
-    size_t n_nodes;
     size_t i;
+    //size_t n_nodes = get_pool_size(dst);
+    const int * node_list = get_pool_nodes(dst);
+    int node = node_list[0]; //FIXME: we need to pick nodes dynamically, relaying on space availability
     int err = -EFAULT;
-    if (mode == DRAM_MODE) {
-        node_list = get_pool_nodes(NVRAM_POOL);
-        n_nodes = get_pool_size(NVRAM_POOL);
-    }
-    else {
-        node_list = get_pool_nodes(DRAM_POOL);
-        n_nodes = get_pool_size(DRAM_POOL);
-    }
 
     //for (i = 0; i < n_nodes; ++i) {
-    node = node_list[0]; //FIXME: we need to pick nodes dynamically, relaying on space availability
     if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
         pr_err("Invalid node %d", node);
         return 0;
     }
 
-
     my_lru_cache_disable();
-    for (i = 0; i < ctx->n_found; ++i) {
-        unsigned long addr = (unsigned long)untagged_addr(ctx->found_addrs[i].addr);
-        size_t idx = ctx->found_addrs[i].pid_idx;
+    for (i = 0; i < n_found; ++i) {
+        unsigned long addr = (unsigned long)untagged_addr(found_addrs[i].addr);
+        size_t idx = found_addrs[i].pid_idx;
         struct mm_struct * mm = g_task_items[idx]->mm;
         err = add_page_for_migration(mm, addr, node, &pagelist);
         if (err > 0)
@@ -1438,6 +1182,7 @@ static int do_migration(struct pte_callback_context_t * ctx, int mode)
 
     err = g_migrate_pages(&pagelist, alloc_dst_page, NULL,
             (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
+
     if (err) {
         err = i - err;
         g_putback_movable_pages(&pagelist);

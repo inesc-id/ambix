@@ -24,6 +24,7 @@ MODULE_DESCRIPTION("Bandwidth-aware page replacement; Ambix successor");
 MODULE_VERSION("0.10");
 
 static bool g_show_aggregates = true;
+static bool g_perf_enabled = true;
 
 /**
  * This function is called for each "step" of a sequence
@@ -192,6 +193,10 @@ int init_module(void)
     if ((rc = perf_counters_init())) {
         pr_warn("PCM initialization failed");
         return rc;
+    }
+
+    if (g_perf_enabled) {
+        perf_counters_enable();
     }
 
     if ((rc = ambix_init())) {
