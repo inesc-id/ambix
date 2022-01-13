@@ -1,11 +1,11 @@
 /**
  * @file    placement.c
- * @author  Miguel Marques <miguel.soares.marques@tecnico.ulisboa.pt>
- * @date    12 March 2020
- * @version 0.3
+ * @author  Ilia Kuzmin <Ilia.Kuzmin@tecnico.ulisboa.pt>
+ * @date    11 Jan 2022
+ * @version 0.4
  * @brief  Page walker for finding page table entries' R/M bits. Intended for the 5.6.3 Linux kernel.
  * Adapted from the code provided by Reza Karimi <r68karimi@gmail.com>
- * @see https://github.com/miguelmarques1904/ambix for a full description of the module.
+ * Adapted from the code implemented by Miguel Marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
 #define DEBUG
@@ -41,7 +41,7 @@
 #include <linux/pagewalk.h>
 #include <linux/string.h>
 
-#include "ambix.h"
+#include "placement.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 

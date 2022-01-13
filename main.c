@@ -14,7 +14,7 @@
 #include <linux/slab.h>
 #include <linux/timer.h>
 
-#include "ambix.h"
+#include "placement.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 
