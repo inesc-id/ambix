@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) "hello.find_kallsyms_lookup_name: " fmt
+#define pr_fmt(fmt) "kmod.find_kallsyms_lookup_name: " fmt
 /*
 * kallsyms_lookup_name undefined and finding not exported functions in the linux kernel
 *

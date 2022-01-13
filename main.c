@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) "hello: " fmt
+#define pr_fmt(fmt) "kmod.main: " fmt
 
 #include <linux/compiler.h>
 #include <linux/init.h>
@@ -14,9 +14,9 @@
 #include <linux/slab.h>
 #include <linux/timer.h>
 
-#include "placement.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
+#include "placement.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ilia Kuzmin");
@@ -30,7 +30,7 @@ static bool g_perf_enabled = true;
  * This function is called for each "step" of a sequence
  *
  */
-static int hello_show(struct seq_file *s, void * private)
+static int kmod_show(struct seq_file *s, void * private)
 {
     //pr_debug("Show\n");
     if (g_show_aggregates) {
@@ -70,7 +70,7 @@ static int hello_show(struct seq_file *s, void * private)
     return 0;
 }
 
-static ssize_t hello_proc_write(
+static ssize_t kmod_proc_write(
         struct file * file,
         const char __user * buffer,
         size_t count,
@@ -137,16 +137,16 @@ static ssize_t hello_proc_write(
     return rc;
 }
 
-static int hello_proc_open(struct inode * node, struct file *file)
+static int kmod_proc_open(struct inode * node, struct file *file)
 {
-    return single_open(file, hello_show, NULL);
+    return single_open(file, kmod_show, NULL);
 };
 
-static const struct proc_ops hello_proc_ops = {
-    .proc_open    = hello_proc_open,
+static const struct proc_ops kmod_proc_ops = {
+    .proc_open    = kmod_proc_open,
     .proc_read    = seq_read,
     .proc_lseek   = seq_lseek,
-    .proc_write   = hello_proc_write,
+    .proc_write   = kmod_proc_write,
     .proc_release = single_release,
 };
 
@@ -175,7 +175,7 @@ void tmr_cleanup(void)
 
 // ---------------------------------------------------------------------------------
 
-#define PROC_NAME "hello"
+#define PROC_NAME "kmod"
 int init_module(void)
 {
     struct proc_dir_entry * entry;
@@ -204,7 +204,7 @@ int init_module(void)
         return rc;
     }
 
-    entry = proc_create(PROC_NAME, 0666, NULL, &hello_proc_ops);
+    entry = proc_create(PROC_NAME, 0666, NULL, &kmod_proc_ops);
     if (!entry) {
         pr_warn("proc initialization failed");
         return -ENOMEM;

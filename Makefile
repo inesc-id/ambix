@@ -1,5 +1,5 @@
-obj-m += mplace.o
-mplace-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o
+obj-m += kmod.o
+kmod-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o
 
 export DEBUG = YES
 #export CONFIG_DYNAMIC_DEBUG ?= YES
@@ -28,17 +28,17 @@ gtags:
 %.d: %.c
 	@clang -MD -MF $@ -I/usr/lib/modules/$(shell uname -r)/build/include/ $^
 	
-insmod: ./mplace.ko
-	@sudo insmod ./mplace.ko
+insmod: ./kmod.ko
+	@sudo insmod ./kmod.ko
 
 rmmod:
-	@sudo rmmod mplace
+	@sudo rmmod kmod
 
 run:
 	@make -s rmmod || true
 	@make -s insmod
-	@echo enable > /proc/mplace
-	@watch cat /proc/mplace
+	@echo enable > /proc/kmod
+	@watch cat /proc/kmod
 
 run.all:
 	@make -s

@@ -1,5 +1,5 @@
 #define DEBUG
-#define pr_fmt(fmt) "hello.perf_counters: " fmt
+#define pr_fmt(fmt) "kmod.perf_counters: " fmt
 
 #include <linux/perf_event.h>
 

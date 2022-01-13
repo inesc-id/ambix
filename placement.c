@@ -9,7 +9,7 @@
  */
 
 #define DEBUG
-#define pr_fmt(fmt) "hello.PLACEMENT: " fmt
+#define pr_fmt(fmt) "kmod.PLACEMENT: " fmt
 
 #include <linux/version.h>
 #include <generated/utsrelease.h>
