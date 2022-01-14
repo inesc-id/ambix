@@ -13,6 +13,7 @@
 #include <linux/seq_file.h> /* for seq_file */
 #include <linux/slab.h>
 #include <linux/timer.h>
+#include <linux/workqueue.h>
 
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
@@ -175,6 +176,40 @@ void tmr_cleanup(void)
 
 // ---------------------------------------------------------------------------------
 
+#define WORK_QUEUE_NAME "WQ/Kmod"
+
+//static struct workqueue_struct *g_workqueue;
+static bool g_work_queue_die = false;
+
+static void work_queue_routine(struct work_struct *dummy);
+static DECLARE_DELAYED_WORK(g_task, work_queue_routine);
+static void work_queue_routine(struct work_struct *dummy)
+{
+    ambix_check_memory();
+    if (!g_work_queue_die) {
+		schedule_delayed_work(&g_task, msecs_to_jiffies(g_time_interval));
+    }
+}
+
+
+int work_queue_init(void)
+{
+    pr_debug("Initializing work queue");
+    //g_workqueue = create_workqueue(WORK_QUEUE_NAME);
+    work_queue_routine(NULL);
+    return 0;
+}
+
+void work_queue_cleanup(void)
+{
+    pr_debug("Deinitializing work queue");
+    g_work_queue_die = true;
+    cancel_delayed_work_sync(&g_task);
+    //destroy_workqueue(g_workqueue);
+}
+
+// ---------------------------------------------------------------------------------
+
 #define PROC_NAME "kmod"
 int init_module(void)
 {
@@ -210,7 +245,10 @@ int init_module(void)
         return -ENOMEM;
     }
 
-    if ((rc = tmr_init())) {
+    //if ((rc = tmr_init())) {
+    //    return rc;
+    //}
+    if ((rc = work_queue_init())) {
         return rc;
     }
 
@@ -220,7 +258,8 @@ int init_module(void)
 void cleanup_module(void)
 {
     pr_info("release\n");
-    tmr_cleanup();
+	work_queue_cleanup();
+    //tmr_cleanup();
     remove_proc_entry(PROC_NAME, NULL);
     ambix_cleanup();
     perf_counters_disable();

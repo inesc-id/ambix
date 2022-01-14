@@ -7,9 +7,11 @@
 
 
 static u32 CPUs[] = {0};//, 16}; //0, 16
-static size_t CPUs_size = ARRAY_SIZE(CPUs);
+//static size_t CPUs_size = ARRAY_SIZE(CPUs);
+static size_t CPUs_size = 0;
 
-static u32 IMCs[] = {13, 14, 15, 16, 17, 18}; // {10}; // 
+static u32 IMCs[] = {13, 14, 15, 16, 17, 18};
+//static u32 IMCs[] = {10};
 
 static size_t IMCs_size = ARRAY_SIZE(IMCs);
 
@@ -45,7 +47,7 @@ struct counter_t ** EVENTs_info = NULL;
 int perf_counters_init(void)
 {
     struct perf_event_attr event_attr = {0};
-    size_t ev_i = 0, imc_i, cpu_i, ctr_i, asz;
+    size_t imc_i, cpu_i, ctr_i, asz, event_array_length;
     int rc = 0;
 
     event_attr.size = sizeof(struct perf_event_attr);
@@ -68,6 +70,8 @@ int perf_counters_init(void)
     PMM_WRITEs = kmalloc(sizeof(PMM_WRITEs[0]) * asz, GFP_KERNEL);
     DDR_WRITEs = kmalloc(sizeof(DDR_WRITEs[0]) * asz, GFP_KERNEL);
 
+    event_array_length = EVENTs_size;
+    EVENTs_size = 0;
     for (imc_i = 0; imc_i < IMCs_size; ++imc_i) {
         event_attr.type = IMCs[imc_i];
         for (cpu_i = 0; cpu_i < CPUs_size; ++cpu_i) {
@@ -80,7 +84,7 @@ int perf_counters_init(void)
                 evt = perf_event_create_kernel_counter(&event_attr, cpu,
                             NULL, NULL, NULL);
 
-                pr_debug("%lu: cpu:%d; imc:%d ev:%llx; name:%s Ok:%c\n", ev_i, cpu, event_attr.type, event_attr.config, info->name, IS_ERR(evt) ? 'N':'Y');
+                pr_debug("%lu: cpu:%d; imc:%d ev:%llx; name:%s Ok:%c\n", EVENTs_size, cpu, event_attr.type, event_attr.config, info->name, IS_ERR(evt) ? 'N':'Y');
 
                 if (IS_ERR(evt)) {
                     rc = PTR_ERR(evt);
@@ -88,27 +92,28 @@ int perf_counters_init(void)
                     goto cleanup;
                 }
 
-                if (ev_i == EVENTs_size) {
+                if (EVENTs_size == event_array_length) {
                     pr_err("Creating more events than allocated buffer");
                     rc = -ENOMEM;
                     goto cleanup;
                 }
 
                 if (!strcmp(info->name, "PMM_READ")) {
-                    PMM_READs[PMM_READs_size++] = ev_i;
+                    PMM_READs[PMM_READs_size++] = EVENTs_size;
                 }
                 else if (!strcmp(info->name, "PMM_WRITE")) {
-                    PMM_WRITEs[PMM_WRITEs_size++] = ev_i;
+                    PMM_WRITEs[PMM_WRITEs_size++] = EVENTs_size;
                 }
                 else if (!strcmp(info->name, "DDR_READ")) {
-                    DDR_READs[DDR_READs_size++] = ev_i;
+                    DDR_READs[DDR_READs_size++] = EVENTs_size;
                 }
                 else if (!strcmp(info->name, "DDR_WRITE")) {
-                    DDR_WRITEs[DDR_WRITEs_size++] = ev_i;
+                    DDR_WRITEs[DDR_WRITEs_size++] = EVENTs_size;
                 }
 
-                EVENTs_info[ev_i] = info;
-                EVENTs[ev_i++] = evt;
+                EVENTs_info[EVENTs_size] = info;
+                EVENTs[EVENTs_size] = evt;
+                ++EVENTs_size;
             }
         }
     }
