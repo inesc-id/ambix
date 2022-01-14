@@ -117,19 +117,6 @@ int perf_counters_init(void)
 
 cleanup:
     perf_counters_cleanup();
-    //for (i = 0; i < ev_i; ++i) {
-    //    perf_event_release_kernel(EVENTs[i]);
-    //    EVENTs[i] = NULL;
-    //}
-    //kfree(EVENTs);
-    //kfree(EVENTs_value);
-    //kfree(EVENTs_time);
-    //kfree(EVENTs_info);
-    //kfree(PMM_READs);
-    //kfree(PMM_WRITEs);
-    //kfree(DDR_READs);
-    //kfree(DDR_WRITEs;
-
     return rc;
 }
 
