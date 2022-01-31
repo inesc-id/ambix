@@ -153,7 +153,7 @@ static const struct proc_ops kmod_proc_ops = {
 
 // ---------------------------------------------------------------------------------
 static struct timer_list g_timer;
-static unsigned g_time_interval = 5000;
+static unsigned g_time_interval = 1000;
 void tmr_handle(struct timer_list * tmr)
 {
     ambix_check_memory();

@@ -1,4 +1,4 @@
-#define DEBUG
+//#define DEBUG
 #define pr_fmt(fmt) "kmod.perf_counters: " fmt
 
 #include <linux/perf_event.h>
@@ -7,8 +7,8 @@
 
 
 static u32 CPUs[] = {0};//, 16}; //0, 16
-//static size_t CPUs_size = ARRAY_SIZE(CPUs);
-static size_t CPUs_size = 0;
+static size_t CPUs_size = ARRAY_SIZE(CPUs);
+//static size_t CPUs_size = 0;
 
 static u32 IMCs[] = {13, 14, 15, 16, 17, 18};
 //static u32 IMCs[] = {10};

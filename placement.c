@@ -8,7 +8,7 @@
  * Adapted from the code implemented by Miguel Marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
-#define DEBUG
+//#define DEBUG
 #define pr_fmt(fmt) "kmod.PLACEMENT: " fmt
 
 #include <linux/version.h>
@@ -72,7 +72,7 @@
 
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
 static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {1}; // FIXME {2}
+static const int NVRAM_NODES[] = {2}; // FIXME {2}
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
@@ -104,24 +104,24 @@ typedef struct addr_info
 } addr_info_t;
 
 
-//#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
-//    /**
-//     * Can't import inline functions, have to duplicate:
-//     */
-//    atomic_t * g_lru_disable_count;
-//
-//    static inline bool my_lru_cache_disable(void)
-//    { return atomic_read(g_lru_disable_count); }
-//
-//    static inline void my_lru_cache_enable(void)
-//    { atomic_dec(g_lru_disable_count); }
-//#else
-//    static inline bool my_lru_cache_disable(void) {
-//        g_lru_add_drain_all();
-//        return true;
-//    }
-//    static inline void my_lru_cache_enable(void) {}
-//#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
+    /**
+     * Can't import inline functions, have to duplicate:
+     */
+    atomic_t * g_lru_disable_count;
+
+    static inline bool my_lru_cache_disable(void)
+    { return atomic_read(g_lru_disable_count); }
+
+    static inline void my_lru_cache_enable(void)
+    { atomic_dec(g_lru_disable_count); }
+#else
+    static inline bool my_lru_cache_disable(void) {
+        g_lru_add_drain_all();
+        return true;
+    }
+    static inline void my_lru_cache_enable(void) {}
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,6)
 #define thp_nr_pages(head) hpage_nr_pages(head)
@@ -869,12 +869,6 @@ static u32 get_memory_usage(enum pool_t pool)
         g_si_meminfo_node(&inf, nodes[i]);
         totalram += inf.totalram;
         freeram += inf.freeram;
-        pr_info("get_memory_usage(%d)[%d] totoal:%ld; free:%ld; buffer:%ld \n",
-                pool,
-                i,
-                K(inf.totalram),
-                K(inf.freeram),
-                K(inf.bufferram));
     }
     return K(totalram - freeram) * USAGE_FACTOR / K(totalram);
 }
@@ -1184,7 +1178,7 @@ static int do_migration(
         return 0;
     }
 
-    //TODO: fixme - my_lru_cache_disable();
+    my_lru_cache_disable();
     for (i = 0; i < n_found; ++i) {
         unsigned long addr = (unsigned long)untagged_addr(found_addrs[i].addr);
         size_t idx = found_addrs[i].pid_idx;
@@ -1213,7 +1207,7 @@ static int do_migration(
     err = i;
 
 out:
-    //my_lru_cache_enable();
+    my_lru_cache_enable();
     return err;
 }
 
@@ -1240,13 +1234,13 @@ int ambix_init(void)
         #include "IMPORT.M"
     #undef M
 
-    //#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
-    //if (!(g_lru_disable_count = (atomic_t *)
-    //    the_kallsyms_lookup_name("lru_disable_count"))) {
-    //    pr_err("Can't lookup 'lru_disable_count' variable.");
-    //    return -1;
-    //}
-    //#endif
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
+    if (!(g_lru_disable_count = (atomic_t *)
+        the_kallsyms_lookup_name("lru_disable_count"))) {
+        pr_err("Can't lookup 'lru_disable_count' variable.");
+        return -1;
+    }
+    #endif
 
 
     return 0;

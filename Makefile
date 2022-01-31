@@ -1,7 +1,8 @@
 obj-m += kmod.o
 kmod-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o
 
-export DEBUG = YES
+KBUILD_CFLAGS += -fno-omit-frame-pointer
+#export DEBUG = YES
 #export CONFIG_DYNAMIC_DEBUG ?= YES
 
 .tags:
@@ -29,6 +30,7 @@ gtags:
 	@clang -MD -MF $@ -I/usr/lib/modules/$(shell uname -r)/build/include/ $^
 	
 insmod: ./kmod.ko
+	@make -s
 	@sudo insmod ./kmod.ko
 
 rmmod:
@@ -40,10 +42,32 @@ run:
 	@echo enable > /proc/kmod
 	@watch cat /proc/kmod
 
-run.all:
-	@make -s
-	@make -s insmod  || /bin/true
-	@make -s -C ../memx run NUMACTL='-m1'
-	@make -s rmmod  || /bin/true
 
-.PHONY: insmod rmmod
+MEMX_OPT ?= "--no-bind"
+run.memx:
+	@make -s -C ../memx run NUMACTL='' MEMX='-w 40000 --limit_seconds 30 ${MEMX_OPT}' OMP_NUM_THREADS=8
+
+run.memx.kmod:
+	@make rmmod || true
+	@make insmod
+	@echo enable > /proc/kmod
+	@make -s run.memx MEMX_OPT="--bind kmod"
+	@make rmmod || true
+
+run.memx.ambix:
+	@make -s -C ../ambix pcm ambixctl
+	@make -s run.memx MEMX_OPT="--bind ambix"
+
+.PHONY: run.memx.kmod run.memx.ambix run.memx
+
+status:
+	@sh -c 'if ! pgrep status; then \
+		tmux split-window -d "watch -n 1 -- ~/bin/status";   \
+		tmux split-window -d "watch cat /proc/kmod"; \
+		fi'
+	@#tmux split-window -d "watch -n 1 -- ~/bin/status"
+	@#echo enable > /proc/kmod
+	@#tmux split-window -d "watch cat /proc/kmod"
+
+
+.PHONY: insmod rmmod status run
