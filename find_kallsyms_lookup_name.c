@@ -53,7 +53,7 @@ static int do_register_kprobe(struct kprobe *kp, char *symbol_name, void *handle
     return ret;
   }
 
-  pr_info("Planted kprobe for symbol %s at %p\n", symbol_name, kp->addr);
+  pr_debug("Planted kprobe for symbol %s at %p\n", symbol_name, kp->addr);
 
   return ret;
 }
@@ -62,7 +62,7 @@ int find_kallsyms_lookup_name(void)
 {
   int ret;
 
-  pr_info("Looking up 'kallsyms_lookup_name'\n");
+  pr_debug("Looking up 'kallsyms_lookup_name'\n");
 
   ret = do_register_kprobe(&kp0, "kallsyms_lookup_name", handler_pre0);
   if (ret < 0)
@@ -77,7 +77,7 @@ int find_kallsyms_lookup_name(void)
   unregister_kprobe(&kp0);
   unregister_kprobe(&kp1);
 
-  pr_info("kallsyms_lookup_name address = 0x%lx\n", kln_addr);
+  pr_debug("kallsyms_lookup_name address = 0x%lx\n", kln_addr);
 
   the_kallsyms_lookup_name = (unsigned long (*)(const char *name)) kln_addr;
 

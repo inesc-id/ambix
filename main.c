@@ -152,34 +152,33 @@ static const struct proc_ops kmod_proc_ops = {
 };
 
 // ---------------------------------------------------------------------------------
-static struct timer_list g_timer;
-static unsigned g_time_interval = 1000;
-void tmr_handle(struct timer_list * tmr)
-{
-    ambix_check_memory();
-    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
-}
+//static struct timer_list g_timer;
+//void tmr_handle(struct timer_list * tmr)
+//{
+//    ambix_check_memory();
+//    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
+//}
 
-int tmr_init(void)
-{
-    pr_info("Initializing timer");
-    timer_setup(&g_timer, tmr_handle, 0);
-    tmr_handle(&g_timer);
-    return 0;
-}
-
-void tmr_cleanup(void)
-{
-    pr_debug("Releasing timer");
-    del_timer(&g_timer);
-}
+//int tmr_init(void)
+//{
+//    pr_info("Initializing timer");
+//    timer_setup(&g_timer, tmr_handle, 0);
+//    tmr_handle(&g_timer);
+//    return 0;
+//}
+//
+//void tmr_cleanup(void)
+//{
+//    pr_debug("Releasing timer");
+//    del_timer(&g_timer);
+//}
 
 // ---------------------------------------------------------------------------------
 
-#define WORK_QUEUE_NAME "WQ/Kmod"
-
+//#define WORK_QUEUE_NAME "WQ/Kmod"
 //static struct workqueue_struct *g_workqueue;
 static bool g_work_queue_die = false;
+static unsigned g_time_interval = 1000;
 
 static void work_queue_routine(struct work_struct *dummy);
 static DECLARE_DELAYED_WORK(g_task, work_queue_routine);
@@ -216,10 +215,10 @@ int init_module(void)
     struct proc_dir_entry * entry;
     int rc;
 
-    pr_info("Initialization");
+    pr_info("Initialization\n");
 
     if ((rc = find_kallsyms_lookup_name())) {
-        pr_info("Can't lookup 'kallsyms_lookup_name'");
+        pr_warn("Can't lookup 'kallsyms_lookup_name'");
         return rc;
     }
 

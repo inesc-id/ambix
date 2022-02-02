@@ -3,7 +3,6 @@ kmod-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o
 
 KBUILD_CFLAGS += -fno-omit-frame-pointer
 #export DEBUG = YES
-#export CONFIG_DYNAMIC_DEBUG ?= YES
 
 .tags:
 	@ctags -f $@ -R .

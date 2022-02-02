@@ -756,19 +756,23 @@ BIND/UNBIND FUNCTIONS
 
 int ambix_bind_pid(pid_t pid)
 {
-    refresh_pids(); // ??
-    if ((pid <= 0) || (pid > MAX_PID_N)) {
-        pr_info("Invalid pid value in bind command.\n");
-        return -1;
-    }
-    if (!find_target_process(pid)) {
-        pr_info("Could not bind pid=%d.\n", pid);
-        return -1;
-    }
 
-    pr_info("Bound pid=%d.\n", pid);
-    return 0;
 }
+//int ambix_bind_pid(pid_t pid)
+//{
+//    refresh_pids(); // ??
+//    if ((pid <= 0) || (pid > MAX_PID_N)) {
+//        pr_info("Invalid pid value in bind command.\n");
+//        return -1;
+//    }
+//    if (!find_target_process(pid)) {
+//        pr_info("Could not bind pid=%d.\n", pid);
+//        return -1;
+//    }
+//
+//    pr_info("Bound pid=%d.\n", pid);
+//    return 0;
+//}
 
 int ambix_unbind_pid(pid_t pid)
 {
@@ -794,7 +798,7 @@ int ambix_unbind_pid(pid_t pid)
     update_pid_list(i);
     pr_info("Unbound pid=%d.\n", pid);
 
-    refresh_pids(); 
+    refresh_pids();
     return 0;
 }
 
@@ -1221,7 +1225,7 @@ MODULE INIT/EXIT
 
 int ambix_init(void)
 {
-    pr_info("Initializing\n");
+    pr_debug("Initializing\n");
 
     g_task_items = kmalloc(sizeof(struct task_struct *) * MAX_PIDS, GFP_KERNEL);
 
@@ -1248,7 +1252,7 @@ int ambix_init(void)
 
 void ambix_cleanup(void)
 {
-    pr_info("Cleaning up\n");
+    pr_debug("Cleaning up\n");
     // -- netlink_kernel_release(nl_sock);
 
     kfree(g_task_items);
