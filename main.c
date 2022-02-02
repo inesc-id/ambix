@@ -152,31 +152,7 @@ static const struct proc_ops kmod_proc_ops = {
 };
 
 // ---------------------------------------------------------------------------------
-//static struct timer_list g_timer;
-//void tmr_handle(struct timer_list * tmr)
-//{
-//    ambix_check_memory();
-//    mod_timer(&g_timer, jiffies + msecs_to_jiffies(g_time_interval));
-//}
 
-//int tmr_init(void)
-//{
-//    pr_info("Initializing timer");
-//    timer_setup(&g_timer, tmr_handle, 0);
-//    tmr_handle(&g_timer);
-//    return 0;
-//}
-//
-//void tmr_cleanup(void)
-//{
-//    pr_debug("Releasing timer");
-//    del_timer(&g_timer);
-//}
-
-// ---------------------------------------------------------------------------------
-
-//#define WORK_QUEUE_NAME "WQ/Kmod"
-//static struct workqueue_struct *g_workqueue;
 static bool g_work_queue_die = false;
 static unsigned g_time_interval = 1000;
 
@@ -189,7 +165,6 @@ static void work_queue_routine(struct work_struct *dummy)
 		schedule_delayed_work(&g_task, msecs_to_jiffies(g_time_interval));
     }
 }
-
 
 int work_queue_init(void)
 {
@@ -244,9 +219,6 @@ int init_module(void)
         return -ENOMEM;
     }
 
-    //if ((rc = tmr_init())) {
-    //    return rc;
-    //}
     if ((rc = work_queue_init())) {
         return rc;
     }
@@ -258,7 +230,6 @@ void cleanup_module(void)
 {
     pr_info("release\n");
 	work_queue_cleanup();
-    //tmr_cleanup();
     remove_proc_entry(PROC_NAME, NULL);
     ambix_cleanup();
     perf_counters_disable();

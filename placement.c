@@ -38,6 +38,7 @@
 #include <linux/mm.h>
 #include <linux/mm_inline.h>
 #include <linux/mmzone.h> // Contains conversion between pfn and node id (NUMA node)
+#include <linux/mutex.h>
 #include <linux/pagewalk.h>
 #include <linux/string.h>
 
@@ -57,8 +58,7 @@
 #define MAX_N_SWITCH (MAX_N_FIND - 1) / 2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets making space for begin and end struct
 #define PMM_MIXED 1
 
-#define MAX_PID_N 2147483647 // set to INT_MAX. true max pid number is shown in /proc/sys/kernel/pid_max
-#define MAX_PIDS 500 // sets the number of PIDs that can be bound to Ambix at any given time
+#define MAX_PIDS 20 // sets the number of PIDs that can be bound to Ambix at any given time
 
 #define IS_64BIT (sizeof(void*) == 8)
 #define MAX_ADDRESS (IS_64BIT ? 0xFFFF880000000000UL : 0xC0000000UL) // Max user-space addresses for the x86 architecture
@@ -76,9 +76,6 @@ static const int NVRAM_NODES[] = {2}; // FIXME {2}
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
-
-int g_nr_pids = 0;
-struct task_struct ** g_task_items;
 
 unsigned long g_last_addr_dram = 0;
 unsigned long g_last_addr_nvram = 0;
@@ -158,91 +155,96 @@ int contains(int value, int mode) {
 }
 
 
-static int find_target_process(pid_t pid)
-{  // to find the task struct by process_name or pid
-    int i;
-    struct pid * pid_s;
-    struct task_struct * t;
+/*
+-------------------------------------------------------------------------------
 
-    if (g_nr_pids >= MAX_PIDS) {
-        pr_info("Managed PIDs at capacity.\n");
-        return 0;
+BIND/UNBIND FUNCTIONS
+
+-------------------------------------------------------------------------------
+*/
+
+static struct pid * PIDs[MAX_PIDS];
+size_t PIDs_size = 0;
+
+static DEFINE_MUTEX(PIDs_mtx);
+
+int ambix_bind_pid(const pid_t nr)
+{
+    struct pid * p = NULL;
+    struct mutex * m = NULL;
+    size_t i;
+    int rc = 0;
+
+    p = find_get_pid(nr);
+    if (!p) {
+        pr_warn("Invalid pid value (%d): can't find pid.\n", nr);
+        rc = -1; goto release_return;
     }
-    for (i=0; i < g_nr_pids; i++) {
-        if ((g_task_items[i] != NULL) && (g_task_items[i]->pid == pid)) {
+
+    mutex_lock(&PIDs_mtx); m = &PIDs_mtx;
+
+    if (PIDs_size == ARRAY_SIZE(PIDs)) {
+        pr_warn("Managed PIDs at capacity.\n");
+        rc = -1; goto release_return;
+    }
+
+    for (i = 0; i < PIDs_size; ++i) {
+        if (PIDs[i] == p) {
             pr_info("Already managing given PID.\n");
-            return 0;
+            rc = -1; goto release_return;
         }
     }
 
-    pid_s = find_get_pid(pid);
-    if (pid_s == NULL) {
-        return 0;
-    }
-    t = get_pid_task(pid_s, PIDTYPE_PID);
-    put_pid(pid_s);
-    if (t != NULL) {
-        g_task_items[g_nr_pids++] = t;
-        return 1;
-    }
+    PIDs[PIDs_size++] = p; p = NULL;
+    pr_info("Bound pid=%d.\n", nr);
 
-    return 0;
+release_return:
+    if (m) mutex_unlock(m);
+    if (p) put_pid(p);
+    return rc;
 }
 
-static int update_pid_list(int i)
+int ambix_unbind_pid(const pid_t nr)
 {
-    int j;
-    if (g_last_pid_dram > i) {
-        g_last_pid_dram--;
-    }
-    else if (g_last_pid_dram == i) {
-        g_last_addr_dram = 0;
+    struct pid * p = NULL;
+    struct mutex * m = NULL;
 
-        if (g_last_pid_dram == (g_nr_pids-1)) {
-            g_last_pid_dram = 0;
+    size_t i;
+    int rc = 0;
+
+    mutex_lock(&PIDs_mtx); m = &PIDs_mtx;
+
+    for (i = 0; i < PIDs_size; ++i) {
+        if (pid_nr(PIDs[i]) == nr) {
+            p = PIDs[i];
+            if (PIDs_size > 0) {
+                PIDs[i] = PIDs[--PIDs_size];
+            }
+            pr_info("Unbound pid=%d.\n", nr);
+            goto release_return;
         }
     }
 
-    if (g_last_pid_nvram > i) {
-        g_last_pid_nvram--;
-    }
-    else if (g_last_pid_nvram == i) {
-        g_last_addr_nvram = 0;
-
-        if (g_last_pid_nvram == (g_nr_pids-1)) {
-            g_last_pid_nvram = 0;
-        }
-    }
-
-    // Shift left all subsequent entries
-    for (j = i; j < (g_nr_pids - 1); j++) {
-        g_task_items[j] = g_task_items[j+1];
-    }
-
-    g_nr_pids--;
-
-    return 0;
+release_return:
+    if (m) mutex_unlock(m);
+    if (p) put_pid(p);
+    return rc;
 }
 
-static int refresh_pids(void)
+void refresh_pids(void)
+// NB! should be called under PIDs_mtx lock
 {
-    int i;
-    for (i=0; i < g_nr_pids; i++) {
-        if (g_task_items[i] != NULL) {
-            struct pid * p = find_get_pid(g_task_items[i]->pid);
-            put_pid(p);
-            if (p != NULL)
-                continue;
+    size_t i;
+    for (i = 0; i < PIDs_size; ++i) {
+        struct task_struct * t = get_pid_task(PIDs[i], PIDTYPE_PID);
+        if (t) {
+            put_task_struct(t);
+            continue;
         }
-        update_pid_list(i);
-        i--;
+        pr_info("Process %d was gone.\n", pid_nr(PIDs[i]));
+        put_pid(PIDs[i]);
+        PIDs[i] = PIDs[--PIDs_size];
     }
-
-    for(i = 0; i < g_nr_pids; ++i) {
-        pr_debug("Bound process: [%d]%d\n", i, g_task_items[i]->pid);
-    }
-
-    return 0;
 }
 
 
@@ -515,24 +517,26 @@ static int do_page_walk(
     unsigned long right = MAX_ADDRESS;
 
     pr_debug("Page walk. Mode:%p; n:%d; last_pid:%d; last_addr:%p.\n",
-            pte_handler, ctx->n_to_find, last_pid, (void *) last_addr);
+            pte_handler, ctx->n_to_find, pid_nr(PIDs[last_pid]), (void *) last_addr);
 
     // start at last_pid's last_addr, walk through all pids and finish by
     // addresses less than last_addr's last_pid; (i.e go twice through idx == last_pid)
-    for (i = last_pid; i != last_pid + g_nr_pids + 1; ++i) {
-        int idx = i % g_nr_pids;
-        struct mm_struct *mm = g_task_items[idx]->mm;
+    for (i = last_pid; i != last_pid + PIDs_size + 1; ++i) {
+        int idx = i % PIDs_size;
+        struct task_struct * t = get_pid_task(PIDs[idx], PIDTYPE_PID);
+        if (!t) { continue; }
 
         pr_debug("Walk iteration [%d] {pid:%d; left:%p; right: %p}\n",
                 i, idx, (void *) left, (void *) right);
 
-        ctx->curr_pid_idx = idx;
 
-        if(mm != NULL) {
-            mmap_read_lock(mm);
-            g_walk_page_range(mm, left, right, &mem_walk_ops, ctx);
-            mmap_read_unlock(mm);
+        if(t->mm != NULL) {
+            mmap_read_lock(t->mm);
+            ctx->curr_pid_idx = idx;
+            g_walk_page_range(t->mm, left, right, &mem_walk_ops, ctx);
+            mmap_read_unlock(t->mm);
         }
+        put_task_struct(t);
 
         if (ctx->n_found >= ctx->n_to_find) {
             pr_debug("Has found enough pages. Last pid is %d.", i);
@@ -541,7 +545,7 @@ static int do_page_walk(
 
         left = 0;
 
-        if ((i + 1) % g_nr_pids == last_pid) { // second run through last_pid
+        if ((i + 1) % PIDs_size == last_pid) { // second run through last_pid
             if (!last_addr) {
                 break; // first run has already covered all address range.
             }
@@ -566,7 +570,7 @@ int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
 
     switch (mode) {
     case DRAM_MODE:
-        last_pid = & g_last_pid_dram;
+        last_pid = &g_last_pid_dram;
         last_addr = & g_last_addr_dram;
         pte_handler = pte_callback_dram;
         break;
@@ -631,20 +635,24 @@ static int pte_callback_nvram_clear(
 
 static int clear_nvram_ptes(struct pte_callback_context_t * ctx)
 {
-    struct mm_struct *mm;
+    struct task_struct * t = NULL;
     struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_nvram_clear};
     int i;
 
     pr_debug("Cleaning NVRAM PTEs");
 
-    for (i = 0; i < g_nr_pids; i++) {
-        mm = g_task_items[i]->mm;
+    for (i = 0; i < PIDs_size; i++) {
+        t = get_pid_task(PIDs[i], PIDTYPE_PID);
+        if (!t) {
+            pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i]));
+            continue;
+        }
         ctx->curr_pid_idx = i;
-        spin_lock(&mm->page_table_lock);
-        g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
-        spin_unlock(&mm->page_table_lock);
+        spin_lock(&t->mm->page_table_lock);
+        g_walk_page_range(t->mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
+        spin_unlock(&t->mm->page_table_lock);
+        put_task_struct(t);
     }
-
     return 0;
 }
 
@@ -748,65 +756,6 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
 /*
 -------------------------------------------------------------------------------
 
-BIND/UNBIND FUNCTIONS
-
--------------------------------------------------------------------------------
-*/
-
-
-int ambix_bind_pid(pid_t pid)
-{
-
-}
-//int ambix_bind_pid(pid_t pid)
-//{
-//    refresh_pids(); // ??
-//    if ((pid <= 0) || (pid > MAX_PID_N)) {
-//        pr_info("Invalid pid value in bind command.\n");
-//        return -1;
-//    }
-//    if (!find_target_process(pid)) {
-//        pr_info("Could not bind pid=%d.\n", pid);
-//        return -1;
-//    }
-//
-//    pr_info("Bound pid=%d.\n", pid);
-//    return 0;
-//}
-
-int ambix_unbind_pid(pid_t pid)
-{
-    // Find which task to remove
-    int i;
-
-    if ((pid <= 0) || (pid > MAX_PID_N)) {
-        pr_info("Invalid pid value in unbind command.\n");
-        return -1;
-    }
-
-    for (i = 0; i < g_nr_pids; i++) {
-        if ((g_task_items[i] != NULL) && (g_task_items[i]->pid == pid)) {
-            break;
-        }
-    }
-
-    if (i == g_nr_pids) {
-        pr_info("Could not unbind pid=%d.\n", pid);
-        return -1;
-    }
-
-    update_pid_list(i);
-    pr_info("Unbound pid=%d.\n", pid);
-
-    refresh_pids();
-    return 0;
-}
-
-
-
-/*
--------------------------------------------------------------------------------
-
 MESSAGE/REQUEST PROCESSING
 
 -------------------------------------------------------------------------------
@@ -814,9 +763,6 @@ MESSAGE/REQUEST PROCESSING
 
 int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int mode)
 {
-    if (g_nr_pids == 0)
-        return -1;
-
     switch (mode) {
     case DRAM_MODE:
     case NVRAM_MODE:
@@ -917,7 +863,7 @@ static u64 get_node_total_pages(const int node)
 int g_switch_act = 1;
 int g_thresh_act = 1;
 
-static u32 ambix_migrate_pages(struct pte_callback_context_t *, int n_pages, int mode);
+static u32 kmod_migrate_pages(struct pte_callback_context_t *, int n_pages, int mode);
 
 //MAIN ENTRY POINT
 int ambix_check_memory(void)
@@ -936,10 +882,10 @@ int ambix_check_memory(void)
         pr_debug("Current NVRAM Usage: %d\n", nvram_usage);
     }
 
-    refresh_pids();
-    if (g_nr_pids == 0) {
+    mutex_lock(&PIDs_mtx); refresh_pids();
+    if (PIDs_size == 0) {
         pr_debug("No bound processes...\n");
-        return 0;
+        goto release_return_acm;
     }
 
     if (g_switch_act) {
@@ -971,7 +917,7 @@ int ambix_check_memory(void)
 
                 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
 
-                num = ambix_migrate_pages(ctx, n_pages, NVRAM_INTENSIVE_MODE);
+                num = kmod_migrate_pages(ctx, n_pages, NVRAM_INTENSIVE_MODE);
                 if (num > 0) {
                     n_migrated += num;
                     pr_debug("NVRAM->DRAM: Sent %d intensive pages out of %d.\n", num, n_pages);
@@ -980,7 +926,7 @@ int ambix_check_memory(void)
             else {
                 u32 num;
                 pr_debug("Switching....");
-                num = ambix_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
+                num = kmod_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
                 if (num > 0) {
                     n_migrated += num;
                     pr_debug("DRAM<->NVRAM: Switched %d out of %d pages.\n", num, 2 * MAX_N_SWITCH);
@@ -1000,7 +946,7 @@ int ambix_check_memory(void)
                     (NVRAM_USAGE_TARGET - get_memory_usage(NVRAM_POOL))
                          * get_memory_total(NVRAM_POOL) / USAGE_FACTOR);
             u32 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
-            u32 num = ambix_migrate_pages(ctx, n_pages, DRAM_MODE);
+            u32 num = kmod_migrate_pages(ctx, n_pages, DRAM_MODE);
             if (num > 0) {
                 n_migrated += num;
                 pr_debug("DRAM->NVRAM: Migrated %d out of %d pages.\n", num, n_pages);
@@ -1015,13 +961,16 @@ int ambix_check_memory(void)
                     (DRAM_USAGE_TARGET - get_memory_usage(DRAM_POOL))
                         * get_memory_total(DRAM_POOL) / USAGE_FACTOR);
             u32 n_pages = n_bytes / PAGE_SIZE;
-            u32 num = ambix_migrate_pages(ctx, n_pages, NVRAM_MODE);
+            u32 num = kmod_migrate_pages(ctx, n_pages, NVRAM_MODE);
             if (num > 0) {
                 n_migrated += num;
                 pr_debug("NVRAM->DRAM: Migrated %d out of %d pages.\n", num, n_pages);
             }
         }
     }
+
+release_return_acm:
+    mutex_unlock(&PIDs_mtx);
     return n_migrated;
 }
 
@@ -1048,7 +997,7 @@ static int do_switch(
 /**
  * returns number of migrated pages
  */
-static u32 ambix_migrate_pages(
+static u32 kmod_migrate_pages(
         struct pte_callback_context_t * ctx,
         const int nr_pages,
         const int mode)
@@ -1100,13 +1049,13 @@ static struct page *alloc_dst_page(
  */
 
 static int add_page_for_migration(
-        struct mm_struct *mm,
+        struct mm_struct * mm,
         unsigned long addr,
         int node,
         struct list_head *pagelist)
 {
-    struct vm_area_struct *vma;
-    struct page *page;
+    struct vm_area_struct * vma;
+    struct page * page;
     unsigned int follflags;
     int err;
 
@@ -1184,10 +1133,13 @@ static int do_migration(
 
     my_lru_cache_disable();
     for (i = 0; i < n_found; ++i) {
-        unsigned long addr = (unsigned long)untagged_addr(found_addrs[i].addr);
+        unsigned long addr = (unsigned long) untagged_addr(found_addrs[i].addr);
         size_t idx = found_addrs[i].pid_idx;
-        struct mm_struct * mm = g_task_items[idx]->mm;
-        err = add_page_for_migration(mm, addr, node, &pagelist);
+        struct task_struct * t = get_pid_task(PIDs[idx], PIDTYPE_PID);
+        if (!t) { continue; }
+        put_task_struct(t);
+
+        err = add_page_for_migration(t->mm, addr, node, &pagelist);
         if (err > 0)
             /*Page is successfully queued for migration*/
             continue;
@@ -1227,8 +1179,6 @@ int ambix_init(void)
 {
     pr_debug("Initializing\n");
 
-    g_task_items = kmalloc(sizeof(struct task_struct *) * MAX_PIDS, GFP_KERNEL);
-
     #define M(RET, NAME, SIGNATURE) \
         if (!(g_ ## NAME = (NAME ##_t)\
                 the_kallsyms_lookup_name(#NAME))) { \
@@ -1255,7 +1205,6 @@ void ambix_cleanup(void)
     pr_debug("Cleaning up\n");
     // -- netlink_kernel_release(nl_sock);
 
-    kfree(g_task_items);
     //kfree(found_addrs);
     //kfree(backup_addrs);
     //kfree(switch_backup_addrs);
