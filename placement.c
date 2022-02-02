@@ -838,12 +838,12 @@ static u64 get_memory_total(enum pool_t pool)
     return totalram * PAGE_SIZE;
 }
 
-static u64 get_node_total_pages(const int node)
-{
-    struct sysinfo inf;
-    g_si_meminfo_node(&inf, node);
-    return inf.totalram;
-}
+//static u64 get_node_total_pages(const int node)
+//{
+//    struct sysinfo inf;
+//    g_si_meminfo_node(&inf, node);
+//    return inf.totalram;
+//}
 
 //static u32 get_memory_free_pages(enum pool_t pool)
 //{
@@ -1196,6 +1196,23 @@ int ambix_init(void)
     }
     #endif
 
+    {
+        size_t i;
+        for (i = 0; i < get_pool_size(DRAM_POOL); ++i) {
+            int n = get_pool_nodes(DRAM_POOL)[i];
+            if (!node_online(n)) {
+                pr_err("DRAM node %d is not online.\n", n);
+                return -1;
+            }
+        }
+        for (i = 0; i < get_pool_size(NVRAM_POOL); ++i) {
+            int n = get_pool_nodes(NVRAM_POOL)[i];
+            if (!node_online(n)) {
+                pr_err("NVRAM node %d is not online.\n", n);
+                return -1;
+            }
+        }
+    }
 
     return 0;
 }
@@ -1203,10 +1220,4 @@ int ambix_init(void)
 void ambix_cleanup(void)
 {
     pr_debug("Cleaning up\n");
-    // -- netlink_kernel_release(nl_sock);
-
-    //kfree(found_addrs);
-    //kfree(backup_addrs);
-    //kfree(switch_backup_addrs);
-    // -- kfree(nlmh_array);
 }

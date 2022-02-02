@@ -210,6 +210,8 @@ int init_module(void)
 
     if ((rc = ambix_init())) {
         pr_warn("Ambix initialization failed");
+        perf_counters_disable();
+        perf_counters_cleanup();
         return rc;
     }
 
