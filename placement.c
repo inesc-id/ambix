@@ -42,10 +42,12 @@
 #include <linux/pagewalk.h>
 #include <linux/string.h>
 
-#include "placement.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
+#include "placement.h"
+#include "tsc.h"
 
+#define SEPARATOR 0xbad
 #define USAGE_FACTOR 100
 #define DRAM_USAGE_TARGET 95
 #define DRAM_USAGE_LIMIT 96
@@ -487,129 +489,6 @@ static int pte_callback_nvram_switch(
     return 0;
 }
 
-
-// ----------------------------------------------------------------------------------
-
-/*
--------------------------------------------------------------------------------
-
-PAGE WALKERS
-
--------------------------------------------------------------------------------
-*/
-
-typedef int (*pte_entry_handler_t)(
-        pte_t *,
-        unsigned long addr,
-        unsigned long next,
-        struct mm_walk *);
-
-static int do_page_walk(
-        pte_entry_handler_t pte_handler,
-        struct pte_callback_context_t * ctx,
-        const int last_pid,
-        const unsigned long last_addr)
-{
-    struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_handler};
-
-    int i;
-    unsigned long left = last_addr;
-    unsigned long right = MAX_ADDRESS;
-
-    pr_debug("Page walk. Mode:%p; n:%d; last_pid:%d; last_addr:%p.\n",
-            pte_handler, ctx->n_to_find, pid_nr(PIDs[last_pid]), (void *) last_addr);
-
-    // start at last_pid's last_addr, walk through all pids and finish by
-    // addresses less than last_addr's last_pid; (i.e go twice through idx == last_pid)
-    for (i = last_pid; i != last_pid + PIDs_size + 1; ++i) {
-        int idx = i % PIDs_size;
-        struct task_struct * t = get_pid_task(PIDs[idx], PIDTYPE_PID);
-        if (!t) { continue; }
-
-        pr_debug("Walk iteration [%d] {pid:%d; left:%p; right: %p}\n",
-                i, idx, (void *) left, (void *) right);
-
-
-        if(t->mm != NULL) {
-            mmap_read_lock(t->mm);
-            ctx->curr_pid_idx = idx;
-            g_walk_page_range(t->mm, left, right, &mem_walk_ops, ctx);
-            mmap_read_unlock(t->mm);
-        }
-        put_task_struct(t);
-
-        if (ctx->n_found >= ctx->n_to_find) {
-            pr_debug("Has found enough pages. Last pid is %d.", i);
-            return i;
-        }
-
-        left = 0;
-
-        if ((i + 1) % PIDs_size == last_pid) { // second run through last_pid
-            if (!last_addr) {
-                break; // first run has already covered all address range.
-            }
-            right = last_addr + 1;
-        }
-    }
-
-    pr_debug("Page walk has been completed. Found %u pages.\n", ctx->n_found);
-
-    return last_pid;
-}
-
-int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
-{
-    pte_entry_handler_t pte_handler;
-    int * last_pid = &g_last_pid_nvram;
-    unsigned long * last_addr = &g_last_addr_nvram;
-
-    ctx->n_to_find = n;
-    ctx->n_backup = 0;
-    ctx->n_found = 0;
-
-    switch (mode) {
-    case DRAM_MODE:
-        last_pid = &g_last_pid_dram;
-        last_addr = & g_last_addr_dram;
-        pte_handler = pte_callback_dram;
-        break;
-    case NVRAM_MODE:
-        pte_handler = pte_callback_nvram_force;
-        break;
-    case NVRAM_WRITE_MODE:
-        pte_handler = pte_callback_nvram_write;
-        break;
-    case NVRAM_INTENSIVE_MODE:
-        pte_handler = pte_callback_nvram_intensive;
-        break;
-    default:
-        printk("Unrecognized mode.\n");
-        return -1;
-    }
-
-    //pr_debug("Memory walk {mode:%d; n:%d; last_pid:%d; last_addr:%p;}\n",
-    //        mode, n, *last_pid, (void *) *last_addr);
-    *last_pid = do_page_walk(pte_handler, ctx, *last_pid, *last_addr);
-    pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d last_addr:%lx}\n",
-            ctx->n_found, ctx->n_backup, *last_pid, (unsigned long)last_addr);
-
-    if (ctx->n_found < ctx->n_to_find
-    && (ctx->n_backup > 0)) {
-        unsigned i = 0;
-        int remaining = ctx->n_to_find - ctx->n_found;
-        pr_debug("Using backup addresses (require %u, has %d)\n", remaining, ctx->n_backup);
-        for (i = 0; (i < ctx->n_backup && i < remaining); ++i) {
-            ctx->found_addrs[ctx->n_found].addr = ctx->backup_addrs[i].addr;
-            ctx->found_addrs[ctx->n_found].pid_idx = ctx->backup_addrs[i].pid_idx;
-            ++ctx->n_found;
-        }
-    }
-    return 0;
-}
-
-// ----------------------------------------------------------------------------------
-
 static int pte_callback_nvram_clear(
         pte_t *ptep,
         unsigned long addr,
@@ -632,6 +511,150 @@ static int pte_callback_nvram_clear(
 
     return 0;
 }
+
+// ----------------------------------------------------------------------------------
+
+/*
+-------------------------------------------------------------------------------
+
+PAGE WALKERS
+
+-------------------------------------------------------------------------------
+*/
+
+
+typedef int (*pte_entry_handler_t)(
+        pte_t *,
+        unsigned long addr,
+        unsigned long next,
+        struct mm_walk *);
+
+static const char * print_mode(pte_entry_handler_t h)
+{
+    if (h == pte_callback_nvram_switch)
+        return "NVRAM-switch";
+    else if (h == pte_callback_nvram_intensive)
+        return "NVRAM-intensive";
+    else if (h == pte_callback_nvram_write)
+        return "NVRAM-write";
+    else if (h == pte_callback_nvram_force)
+        return "NVRAM-force";
+    else if (h == pte_callback_nvram_clear)
+        return "NVRAM-clear";
+    else if (h == pte_callback_dram)
+        return "DRAM";
+    else
+        return "Unknown";
+}
+
+static int do_page_walk(
+        pte_entry_handler_t pte_handler,
+        struct pte_callback_context_t * ctx,
+        const int lst_pid_idx,
+        const unsigned long last_addr)
+{
+    struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_handler};
+
+    int i;
+    unsigned long left = last_addr;
+    unsigned long right = MAX_ADDRESS;
+
+    pr_debug("Page walk. Mode:%s; n:%d/%d; last_pid:%d(%d); last_addr:%lx.\n",
+            print_mode(pte_handler), ctx->n_found, ctx->n_to_find, pid_nr(PIDs[lst_pid_idx]), lst_pid_idx , last_addr);
+
+    // start at lst_pid_idx's last_addr, walk through all pids and finish by
+    // addresses less than last_addr's lst_pid_idx; (i.e go twice through idx == lst_pid_idx)
+    for (i = lst_pid_idx; i != lst_pid_idx + PIDs_size + 1; ++i) {
+        int idx = i % PIDs_size;
+        struct task_struct * t = get_pid_task(PIDs[idx], PIDTYPE_PID);
+        if (!t) { continue; }
+
+        pr_debug("Walk iteration [%d] {pid:%d(%d); left:%lx; right: %lx}\n",
+                i, pid_nr(PIDs[idx]), idx, left, right);
+
+        if(t->mm != NULL) {
+            mmap_read_lock(t->mm);
+            ctx->curr_pid_idx = idx;
+            g_walk_page_range(t->mm, left, right, &mem_walk_ops, ctx);
+            mmap_read_unlock(t->mm);
+        }
+        put_task_struct(t);
+
+        if (ctx->n_found >= ctx->n_to_find) {
+            pr_debug("Has found enough (%u) pages. Last pid is %d(%d).",
+                    ctx->n_found, pid_nr(PIDs[idx]), idx);
+            return idx;
+        }
+
+        left = 0;
+
+        if ((i + 1) % PIDs_size == lst_pid_idx) { // second run through lst_pid_idx
+            if (!last_addr) {
+                break; // first run has already covered all address range.
+            }
+            right = last_addr; // + page?
+        }
+    }
+
+    pr_debug("Page walk has been completed. Found %u pages.\n", ctx->n_found);
+
+    return lst_pid_idx;
+}
+
+/**
+ * returns 0 if success, -1 if error occurs
+ **/
+int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
+{
+    pte_entry_handler_t pte_handler;
+    int * last_pid_idx = &g_last_pid_nvram;
+    unsigned long * last_addr = &g_last_addr_nvram;
+
+    ctx->n_to_find = n;
+    ctx->n_backup = 0;
+    ctx->n_found = 0;
+
+    switch (mode) {
+    case DRAM_MODE:
+        last_pid_idx = &g_last_pid_dram;
+        last_addr = & g_last_addr_dram;
+        pte_handler = pte_callback_dram;
+        break;
+    case NVRAM_MODE:
+        pte_handler = pte_callback_nvram_force;
+        break;
+    case NVRAM_WRITE_MODE:
+        pte_handler = pte_callback_nvram_write;
+        break;
+    case NVRAM_INTENSIVE_MODE:
+        pte_handler = pte_callback_nvram_intensive;
+        break;
+    default:
+        printk("Unrecognized mode.\n");
+        return -1;
+    }
+
+    //pr_debug("Memory walk {mode:%d; n:%d; last_pid_idx:%d; last_addr:%p;}\n",
+    //        mode, n, *last_pid_idx, (void *) *last_addr);
+    *last_pid_idx = do_page_walk(pte_handler, ctx, *last_pid_idx, *last_addr);
+    pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d(%d) last_addr:%lx}\n",
+            ctx->n_found, ctx->n_backup, pid_nr(PIDs[*last_pid_idx]), *last_pid_idx, *last_addr);
+
+    if (ctx->n_found < ctx->n_to_find
+    && (ctx->n_backup > 0)) {
+        unsigned i = 0;
+        int remaining = ctx->n_to_find - ctx->n_found;
+        pr_debug("Using backup addresses (require %u, has %d)\n", remaining, ctx->n_backup);
+        for (i = 0; (i < ctx->n_backup && i < remaining); ++i) {
+            ctx->found_addrs[ctx->n_found].addr = ctx->backup_addrs[i].addr;
+            ctx->found_addrs[ctx->n_found].pid_idx = ctx->backup_addrs[i].pid_idx;
+            ++ctx->n_found;
+        }
+    }
+    return 0;
+}
+
+// ----------------------------------------------------------------------------------
 
 static int clear_nvram_ptes(struct pte_callback_context_t * ctx)
 {
@@ -659,7 +682,7 @@ static int clear_nvram_ptes(struct pte_callback_context_t * ctx)
 // ----------------------------------------------------------------------------------
 
 /**
- * returns number of candidate pages
+ * return 0 if success, (-1 otherwise)
  **/
 int switch_walk(struct pte_callback_context_t * ctx, u32 n)
 {
@@ -673,7 +696,7 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
 
     g_last_pid_nvram = do_page_walk(pte_callback_nvram_switch, ctx, g_last_pid_nvram, g_last_addr_nvram);
 
-    ctx->found_addrs[ctx->n_found].pid_idx = 0; // fill separator after
+    ctx->found_addrs[ctx->n_found].pid_idx = SEPARATOR; // fill separator after
     if ((ctx->n_found == 0) && (ctx->n_switch_backup == 0)) {
         ctx->n_found++;
         return -1;
@@ -705,7 +728,7 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
             int old_dram_start = nvram_found + 1;
             nvram_found = dram_found + ctx->n_backup; // update nvram_found and discard other entries
             new_dram_start = nvram_found + 1;
-            ctx->found_addrs[nvram_found].pid_idx = 0; // fill separator after nvram pages
+            ctx->found_addrs[nvram_found].pid_idx = SEPARATOR; // fill separator after nvram pages
 
             for (i = 0; i < dram_found; i++) {
                 ctx->found_addrs[new_dram_start + i].addr = ctx->found_addrs[old_dram_start + i].addr;
@@ -761,6 +784,7 @@ MESSAGE/REQUEST PROCESSING
 -------------------------------------------------------------------------------
 */
 
+// returns 0 if success, negative value otherwise
 int find_candidate_pages(struct pte_callback_context_t * ctx, u32 n_pages, int mode)
 {
     switch (mode) {
@@ -796,7 +820,7 @@ static const int * get_pool_nodes(const enum pool_t pool)
     return ERR_PTR(-EINVAL);
 }
 
-static size_t get_pool_size(enum pool_t pool)
+static size_t get_pool_size(const enum pool_t pool)
 {
     switch (pool) {
     case DRAM_POOL: return n_dram_nodes;
@@ -805,6 +829,15 @@ static size_t get_pool_size(enum pool_t pool)
 
     pr_err("Unknown pool %d\n", pool);
     return 0;
+}
+
+static const char * get_pool_name(const enum pool_t pool)
+{
+    switch(pool) {
+    case DRAM_POOL: return "DRAM";
+    case NVRAM_POOL: return "NVRAM";
+    default: return "Unknown";
+    }
 }
 
 static u32 get_memory_usage(enum pool_t pool)
@@ -890,6 +923,7 @@ int ambix_check_memory(void)
 
     if (g_switch_act) {
         u64 pmm_bw = 0;
+
         if (PMM_MIXED) {
             pmm_bw = perf_counters_pmm_writes() + perf_counters_pmm_reads();
         }
@@ -898,12 +932,13 @@ int ambix_check_memory(void)
         }
         pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw, NVRAM_BW_THRESH);
         if (pmm_bw >= NVRAM_BW_THRESH) {
+            u64 tsc_start = tsc_rd(), clear_us, migrate_us;
             clear_nvram_ptes(ctx);
+            clear_us = tsc_to_usec(tsc_rd() - tsc_start);
+
             if (get_memory_usage(DRAM_POOL) < DRAM_USAGE_TARGET) {
                 u64 n_bytes;
                 u32 n_pages, num;
-
-                pr_debug("Sending....");
 
                 n_bytes = (DRAM_USAGE_LIMIT - get_memory_usage(DRAM_POOL))
                                 * get_memory_total(DRAM_POOL) / USAGE_FACTOR;
@@ -917,19 +952,27 @@ int ambix_check_memory(void)
 
                 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
 
+                tsc_start = tsc_rd();
                 num = kmod_migrate_pages(ctx, n_pages, NVRAM_INTENSIVE_MODE);
+                migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
+
                 if (num > 0) {
                     n_migrated += num;
-                    pr_debug("NVRAM->DRAM: Sent %d intensive pages out of %d.\n", num, n_pages);
+                    pr_info("NVRAM->DRAM [B]: Sent %d intensive pages out of %d."
+                            " (%lldus cleanup; %lldus migration) \n", num, n_pages, clear_us, migrate_us);
                 }
             }
             else {
                 u32 num;
-                pr_debug("Switching....");
+                tsc_start = tsc_rd();
                 num = kmod_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
+                migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
                 if (num > 0) {
                     n_migrated += num;
-                    pr_debug("DRAM<->NVRAM: Switched %d out of %d pages.\n", num, 2 * MAX_N_SWITCH);
+                    pr_info("DRAM<->NVRAM [B]: Switched %d out of %d pages."
+                            " (%lldus cleanup; %lldus migration)\n",
+                            num, 2 * MAX_N_SWITCH,
+                            clear_us, migrate_us);
                 }
             }
         }
@@ -946,10 +989,14 @@ int ambix_check_memory(void)
                     (NVRAM_USAGE_TARGET - get_memory_usage(NVRAM_POOL))
                          * get_memory_total(NVRAM_POOL) / USAGE_FACTOR);
             u32 n_pages = min(n_bytes / PAGE_SIZE, (u64) MAX_N_FIND);
+            u64 const tsc_start = tsc_rd();
             u32 num = kmod_migrate_pages(ctx, n_pages, DRAM_MODE);
+            u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
             if (num > 0) {
                 n_migrated += num;
-                pr_debug("DRAM->NVRAM: Migrated %d out of %d pages.\n", num, n_pages);
+                pr_info("DRAM->NVRAM [U]: Migrated %d out of %d pages."
+                        " (%lldus migration)"
+                        "\n", num, n_pages, migrate_us);
             }
         }
         else if (!g_switch_act
@@ -961,10 +1008,14 @@ int ambix_check_memory(void)
                     (DRAM_USAGE_TARGET - get_memory_usage(DRAM_POOL))
                         * get_memory_total(DRAM_POOL) / USAGE_FACTOR);
             u32 n_pages = n_bytes / PAGE_SIZE;
+            u64 const tsc_start = tsc_rd();
             u32 num = kmod_migrate_pages(ctx, n_pages, NVRAM_MODE);
+            u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
             if (num > 0) {
                 n_migrated += num;
-                pr_debug("NVRAM->DRAM: Migrated %d out of %d pages.\n", num, n_pages);
+                pr_info("NVRAM->DRAM [U]: Migrated %d out of %d pages."
+                        " (%lldus migration)\n",
+                        num, n_pages, migrate_us);
             }
         }
     }
@@ -985,13 +1036,14 @@ static int do_switch(
         const size_t n_found)
 {
     u32 sep;
-    for (sep = 0; sep < n_found && found_addrs[sep].pid_idx > 0; ++sep);
+    for (sep = 0; sep < n_found && found_addrs[sep].pid_idx != SEPARATOR; ++sep);
     if (sep == n_found) {
-        pr_debug("Can't find separator");
+        pr_warn("Can't find separator");
         return 0;
     }
-    return do_migration(found_addrs, sep, NVRAM_POOL);
-         + do_migration(found_addrs + sep + 1, n_found - sep - 1, DRAM_POOL);
+    pr_debug("Switching: [0, %d], [%d, %ld]\n", sep, sep + 1, n_found);
+    return do_migration(found_addrs + sep + 1, n_found - sep - 1, NVRAM_POOL);
+         + do_migration(found_addrs, sep, DRAM_POOL);
 }
 
 /**
@@ -1002,25 +1054,40 @@ static u32 kmod_migrate_pages(
         const int nr_pages,
         const int mode)
 {
+    int rc;
+    u32 nr;
+    u64 tsc_start, find_candidates_us;
     pr_debug("It was requested %d page migrations\n", nr_pages);
-    if (find_candidate_pages(ctx, nr_pages, mode)) {
-        pr_debug("No candidates were found\n");
+
+    tsc_start = tsc_rd();
+    rc = find_candidate_pages(ctx, nr_pages, mode);
+    find_candidates_us = tsc_to_usec(tsc_rd() - tsc_start);
+    if (rc) {
+        pr_debug("No candidates were found (%lldus)\n", find_candidates_us);
         return 0;
     }
 
-    pr_debug("Found %d candidates\n", ctx->n_found);
+    pr_debug("Found %d candidates (%lldus)\n", ctx->n_found, find_candidates_us);
 
+    nr = 0;
+    tsc_start = tsc_rd();
     switch (mode) {
     case DRAM_MODE:
-        return do_migration(ctx->found_addrs, ctx->n_found, NVRAM_POOL);
+        nr = do_migration(ctx->found_addrs, ctx->n_found, NVRAM_POOL);
+        pr_debug("DRAM migration of %d pages took %lldus", nr, tsc_to_usec(tsc_rd() - tsc_start));
+        break;
     case NVRAM_MODE:
     case NVRAM_WRITE_MODE:
     case NVRAM_INTENSIVE_MODE:
-        return do_migration(ctx->found_addrs, ctx->n_found, DRAM_POOL);
+        nr = do_migration(ctx->found_addrs, ctx->n_found, DRAM_POOL);
+        pr_debug("NVRAM migration of %d pages took %lldus", nr, tsc_to_usec(tsc_rd() - tsc_start));
+        break;
     case SWITCH_MODE:
-        return do_switch(ctx->found_addrs, ctx->n_found);
+        nr = do_switch(ctx->found_addrs, ctx->n_found);
+        pr_debug("Switch of %d pages took %lldus", nr, tsc_to_usec(tsc_rd() - tsc_start));
+        break;
     }
-    return 0;
+    return nr;
 }
 
 static struct page *alloc_dst_page(
@@ -1062,24 +1129,32 @@ static int add_page_for_migration(
     mmap_read_lock(mm);
     err = -EFAULT;
     vma = find_vma(mm, addr);
-    if (!vma || addr < vma->vm_start || !g_vma_migratable(vma))
+    if (!vma || addr < vma->vm_start || !g_vma_migratable(vma)) {
+        pr_debug("Can not find vma.\n");
         goto out;
+    }
 
     /* FOLL_DUMP to ignore special (like zero) pages */
     follflags = FOLL_GET | FOLL_DUMP;
     page = g_follow_page(vma, addr, follflags);
 
     err = PTR_ERR(page);
-    if (IS_ERR(page))
+    if (IS_ERR(page)) {
+        pr_debug("Can not follow page.\n");
         goto out;
+    }
 
     err = -ENOENT;
-    if (!page)
+    if (!page) {
+        pr_debug("Page is empty.\n");
         goto out;
+    }
 
     err = 0;
-    if (page_to_nid(page) == node)
+    if (page_to_nid(page) == node) {
+        pr_debug("Page is already on desired node.\n");
         goto out_putpage;
+    }
 
     err = -EACCES;
     if (PageHuge(page)) {
@@ -1087,13 +1162,16 @@ static int add_page_for_migration(
             g_isolate_huge_page(page, pagelist);
             err = 1;
         }
-    } else {
+    }
+    else {
         struct page *head;
 
         head = compound_head(page);
         err = g_isolate_lru_page(head);
-        if (err)
+        if (err) {
+            pr_debug("Failed to isolate page.\n");
             goto out_putpage;
+        }
 
         err = 1;
         list_add_tail(&head->lru, pagelist);
@@ -1123,7 +1201,7 @@ static int do_migration(
     //size_t n_nodes = get_pool_size(dst);
     const int * node_list = get_pool_nodes(dst);
     int node = node_list[0]; //FIXME: we need to pick nodes dynamically, relaying on space availability
-    int err = -EFAULT;
+    int err = 0;
 
     //for (i = 0; i < n_nodes; ++i) {
     if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
@@ -1131,6 +1209,7 @@ static int do_migration(
         return 0;
     }
 
+    pr_debug("DO MIGRATION: %ld pages -> %s", n_found, get_pool_name(dst));
     my_lru_cache_disable();
     for (i = 0; i < n_found; ++i) {
         unsigned long addr = (unsigned long) untagged_addr(found_addrs[i].addr);
@@ -1143,11 +1222,11 @@ static int do_migration(
         if (err > 0)
             /*Page is successfully queued for migration*/
             continue;
-
         break;
     }
 
     if (list_empty(&pagelist)) {
+        pr_debug("Page list is empty!\n");
         err = 0;
         goto out;
     }
@@ -1156,10 +1235,13 @@ static int do_migration(
             (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
 
     if (err) {
+        pr_debug("migrate_pages has returned en error: %d\n", err);
         err = i - err;
         g_putback_movable_pages(&pagelist);
         goto out;
     }
+
+    pr_debug("Successfully migrated %ld\n", i);
     err = i;
 
 out:

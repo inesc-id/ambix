@@ -1,5 +1,5 @@
 obj-m += kmod.o
-kmod-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o
+kmod-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o tsc.o
 
 KBUILD_CFLAGS += -fno-omit-frame-pointer
 export DEBUG = YES

@@ -233,8 +233,14 @@ u64 jiffies_to_sec(const u64 jf)
     return (jf + HZ/2) / HZ;
 }
 
-u64 jiffies_to_msec(const u64 jf)
-{
-    static const u64 factor = HZ / 100;
-    return (jf + factor/2) / factor;
-}
+//u64 jiffies_to_msec(const u64 jf)
+//{
+//    static const u64 factor = HZ / 1000;
+//    return (jf + factor/2) / factor;
+//}
+//
+//u64 jiffies_to_usec(const u64 jf)
+//{
+//    static const u64 factor = HZ / 1000000;
+//    return (jf + factor/2) / factor;
+//}

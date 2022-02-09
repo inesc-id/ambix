@@ -18,6 +18,7 @@
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 #include "placement.h"
+#include "tsc.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ilia Kuzmin");
@@ -191,6 +192,8 @@ int init_module(void)
     int rc;
 
     pr_info("Initialization\n");
+
+    tsc_init();
 
     if ((rc = find_kallsyms_lookup_name())) {
         pr_warn("Can't lookup 'kallsyms_lookup_name'");

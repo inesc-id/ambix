@@ -12,7 +12,8 @@ bool perf_counters_read_change(size_t idx, u64 * value, u64 * jiffies);
 struct counter_t * const perf_counters_info(size_t idx);
 
 u64 jiffies_to_sec(const u64 jf);
-u64 jiffies_to_msec(const u64 jf);
+//u64 jiffies_to_msec(const u64 jf);
+//u64 jiffies_to_usec(const u64 jf);
 
 unsigned long long perf_counters_pmm_writes(void);
 unsigned long long perf_counters_pmm_reads(void);
