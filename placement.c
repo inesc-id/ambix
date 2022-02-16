@@ -243,7 +243,7 @@ void refresh_pids(void)
             put_task_struct(t);
             continue;
         }
-        pr_info("Process %d was gone.\n", pid_nr(PIDs[i]));
+        pr_info("Process %d has gone.\n", pid_nr(PIDs[i]));
         put_pid(PIDs[i]);
         PIDs[i] = PIDs[--PIDs_size];
     }
@@ -596,7 +596,7 @@ static int do_page_walk(
         }
     }
 
-    pr_debug("Page walk has been completed. Found %u pages.\n", ctx->n_found);
+    pr_debug("Page walk has completed. Found %u of %u pages.\n", ctx->n_found, ctx->n_to_find);
 
     return lst_pid_idx;
 }
@@ -637,7 +637,7 @@ int mem_walk(struct pte_callback_context_t * ctx, const int n, const int mode)
     //pr_debug("Memory walk {mode:%d; n:%d; last_pid_idx:%d; last_addr:%p;}\n",
     //        mode, n, *last_pid_idx, (void *) *last_addr);
     *last_pid_idx = do_page_walk(pte_handler, ctx, *last_pid_idx, *last_addr);
-    pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d(%d) last_addr:%lx}\n",
+    pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d(%d) last_addr:%lx;\n",
             ctx->n_found, ctx->n_backup, pid_nr(PIDs[*last_pid_idx]), *last_pid_idx, *last_addr);
 
     if (ctx->n_found < ctx->n_to_find
@@ -696,30 +696,29 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
 
     g_last_pid_nvram = do_page_walk(pte_callback_nvram_switch, ctx, g_last_pid_nvram, g_last_addr_nvram);
 
-    ctx->found_addrs[ctx->n_found].pid_idx = SEPARATOR; // fill separator after
-    if ((ctx->n_found == 0) && (ctx->n_switch_backup == 0)) {
+    ctx->found_addrs[ctx->n_found++].pid_idx = SEPARATOR; // fill separator after
+    if ((ctx->n_found == 1) && (ctx->n_switch_backup == 0)) {
         ctx->n_found++;
         return -1;
     }
 
-    nvram_found = ctx->n_found; // store the number of ideal nvram pages found
+    nvram_found = ctx->n_found - 1; // store the number of ideal nvram pages found
     dram_to_find = min(nvram_found + ctx->n_switch_backup, n);
 
-    ++ctx->n_found;
     ctx->n_backup = 0;
     ctx->n_to_find = ctx->n_found + dram_to_find; // try to find the same amount of dram addrs
 
     g_last_pid_dram = do_page_walk(pte_callback_dram, ctx, g_last_pid_dram, g_last_addr_dram);
-    dram_found = ctx->n_found - nvram_found - 1;
+    dram_found = ctx->n_found - 1/*separator*/ - nvram_found ;
 
     // found equal number of dram and nvram entries
     if (dram_found == nvram_found) {
         return 0;
     }
-    else if ((dram_found < nvram_found) && (ctx->n_backup > 0)) {
+    if ((dram_found < nvram_found) && (ctx->n_backup > 0)) {
         int i;
         int remaining = nvram_found - dram_found;
-        int to_add;
+        int to_add = remaining;
 
         if (ctx->n_backup < remaining) {
             // shift left dram entries (discard excess nvram addrs)
@@ -736,9 +735,6 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
             }
             to_add = ctx->n_backup;
             ctx->n_found = new_dram_start + dram_found;
-        }
-        else {
-            to_add = remaining;
         }
         for (i = 0; i < to_add; i++) {
             ctx->found_addrs[ctx->n_found].addr = ctx->backup_addrs[i].addr;
@@ -769,7 +765,7 @@ int switch_walk(struct pte_callback_context_t * ctx, u32 n)
         ctx->n_found = nvram_found * 2 + 1; // discard last entries
     }
     else {
-        ctx->found_addrs[0].pid_idx = 0;
+        ctx->found_addrs[0].pid_idx = SEPARATOR;
         ctx->n_found = 1;
     }
 
@@ -956,24 +952,20 @@ int ambix_check_memory(void)
                 num = kmod_migrate_pages(ctx, n_pages, NVRAM_INTENSIVE_MODE);
                 migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
 
-                if (num > 0) {
-                    n_migrated += num;
-                    pr_info("NVRAM->DRAM [B]: Sent %d intensive pages out of %d."
-                            " (%lldus cleanup; %lldus migration) \n", num, n_pages, clear_us, migrate_us);
-                }
+                n_migrated += num;
+                pr_info("NVRAM->DRAM [B]: Migrated %d intensive pages out of %d."
+                        " (%lldus cleanup; %lldus migration) \n", num, n_pages, clear_us, migrate_us);
             }
             else {
                 u32 num;
                 tsc_start = tsc_rd();
                 num = kmod_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
                 migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
-                if (num > 0) {
-                    n_migrated += num;
-                    pr_info("DRAM<->NVRAM [B]: Switched %d out of %d pages."
-                            " (%lldus cleanup; %lldus migration)\n",
-                            num, 2 * MAX_N_SWITCH,
-                            clear_us, migrate_us);
-                }
+                n_migrated += num;
+                pr_info("DRAM<->NVRAM [B]: Switched %d out of %d pages."
+                        " (%lldus cleanup; %lldus migration)\n",
+                        num, 2 * MAX_N_SWITCH,
+                        clear_us, migrate_us);
             }
         }
     }
@@ -992,12 +984,9 @@ int ambix_check_memory(void)
             u64 const tsc_start = tsc_rd();
             u32 num = kmod_migrate_pages(ctx, n_pages, DRAM_MODE);
             u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
-            if (num > 0) {
-                n_migrated += num;
-                pr_info("DRAM->NVRAM [U]: Migrated %d out of %d pages."
-                        " (%lldus migration)"
-                        "\n", num, n_pages, migrate_us);
-            }
+            n_migrated += num;
+            pr_info("DRAM->NVRAM [U]: Migrated %d out of %d pages."
+                    " (%lldus)\n", num, n_pages, migrate_us);
         }
         else if (!g_switch_act
              && (get_memory_usage(NVRAM_POOL) > NVRAM_USAGE_LIMIT)
@@ -1011,12 +1000,9 @@ int ambix_check_memory(void)
             u64 const tsc_start = tsc_rd();
             u32 num = kmod_migrate_pages(ctx, n_pages, NVRAM_MODE);
             u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
-            if (num > 0) {
-                n_migrated += num;
-                pr_info("NVRAM->DRAM [U]: Migrated %d out of %d pages."
-                        " (%lldus migration)\n",
-                        num, n_pages, migrate_us);
-            }
+            n_migrated += num;
+            pr_info("NVRAM->DRAM [U]: Migrated %d out of %d pages."
+                    " (%lldus)\n", num, n_pages, migrate_us);
         }
     }
 
@@ -1216,9 +1202,9 @@ static int do_migration(
         size_t idx = found_addrs[i].pid_idx;
         struct task_struct * t = get_pid_task(PIDs[idx], PIDTYPE_PID);
         if (!t) { continue; }
-        put_task_struct(t);
 
         err = add_page_for_migration(t->mm, addr, node, &pagelist);
+        put_task_struct(t);
         if (err > 0)
             /*Page is successfully queued for migration*/
             continue;

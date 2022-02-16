@@ -38,7 +38,6 @@ rmmod:
 run:
 	@make -s rmmod || true
 	@make -s insmod
-	@echo enable > /proc/kmod
 	@watch cat /proc/kmod
 
 
@@ -49,7 +48,6 @@ run.memx:
 run.memx.kmod:
 	@make rmmod || true
 	@make insmod
-	@echo enable > /proc/kmod
 	@make -s run.memx MEMX_OPT="--bind kmod"
 	@make rmmod || true
 

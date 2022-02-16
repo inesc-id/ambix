@@ -131,6 +131,9 @@ static ssize_t kmod_proc_write(
     else if (!strcmp(buf, "enable")) {
         perf_counters_enable();
     }
+    else if (!strcmp(buf, "disable")) {
+        perf_counters_disable();
+    }
     else {
         pr_info("unknown cmd %s\n", buf);
         rc = -EINVAL;
