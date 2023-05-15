@@ -8,25 +8,25 @@ export DEBUG = YES
 	@ctags -f $@ -R .
 
 all:
-	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) modules
 
 clean:
-	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) clean
 
 help:
-	@make -C /lib/modules/$(shell uname -r)/build help
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build help
 
 tags:
-	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) tags
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) tags
 
 cscope:
-	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) cscope
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) cscope
 
 gtags:
-	@make -C /lib/modules/$(shell uname -r)/build M=$(PWD) gtags
+	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) gtags
 
 %.d: %.c
-	@clang -MD -MF $@ -I/usr/lib/modules/$(shell uname -r)/build/include/ $^
+	@clang -MD -MF $@ -I${DEVKERNELROOT}/usr/lib/modules/*/build/include/ $^
 	
 insmod: ./kmod.ko
 	@make -s
@@ -67,4 +67,7 @@ status:
 	@#tmux split-window -d "watch cat /proc/kmod"
 
 
-.PHONY: insmod rmmod status run
+gen_clangd_config:
+	@bear --verbose -- make
+
+.PHONY: insmod rmmod status run gen_clangd_config
