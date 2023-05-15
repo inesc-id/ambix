@@ -8,25 +8,25 @@ export DEBUG = YES
 	@ctags -f $@ -R .
 
 all:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) modules
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) clean
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build M=$(PWD) clean
 
 help:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build help
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build help
 
 tags:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) tags
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build M=$(PWD) tags
 
 cscope:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) cscope
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build M=$(PWD) cscope
 
 gtags:
-	@make -C ${DEVKERNELROOT}/lib/modules/*/build M=$(PWD) gtags
+	@make -C ${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build M=$(PWD) gtags
 
 %.d: %.c
-	@clang -MD -MF $@ -I${DEVKERNELROOT}/usr/lib/modules/*/build/include/ $^
+	@clang -MD -MF $@ -I${DEVKERNELROOT}/usr/lib/modules/$(shell uname -r)/build/include/ $^
 	
 insmod: ./ambix.ko
 	@make -s
