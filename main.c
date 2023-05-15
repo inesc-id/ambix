@@ -203,7 +203,7 @@ int init_module(void)
         return rc;
     }
 
-    //pr_info("walk_page_range address = 0x%lx\n", the_kallsyms_lookup_name("walk_page_range"));
+    pr_info("walk_page_range address = 0x%lx\n", the_kallsyms_lookup_name("walk_page_range"));
 
     if ((rc = perf_counters_init())) {
         pr_warn("PCM initialization failed");

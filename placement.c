@@ -74,7 +74,7 @@
 
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value than NVRAM nodes' ids due to the memory policy set in client-placement.c
 static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {2}; // FIXME {2}
+static const int NVRAM_NODES[] = {1}; // FIXME {2}
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
