@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) "kmod.main: " fmt
+#define pr_fmt(fmt) "ambix.main: " fmt
 
 #include <linux/compiler.h>
 #include <linux/init.h>
