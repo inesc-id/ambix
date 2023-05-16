@@ -219,7 +219,7 @@ int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
   PIDs[index].start_addr = start_addr;
   PIDs[index].end_addr = end_addr;
   p = NULL;
-  pr_info("Bound pid=%d with start_addr=0x%lux and end_addr=0x%lux.\n", nr,
+  pr_info("Bound pid=%d with start_addr=%lx and end_addr=%lx.\n", nr,
           start_addr, end_addr);
 
 release_return:

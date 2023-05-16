@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) "ambix.main: " fmt
+#define DEBUG
 
 #include <linux/compiler.h>
 #include <linux/init.h>
@@ -86,13 +87,17 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   // */
   // del_timer_sync(&led_blink_timer);
 
-  if (!strcmp(buf, "bind_constrained")) {
+  if (!strncmp(buf, "bind_constrained", 16)) {
     unsigned long start, end;
-    if (sscanf(buf, "bind_constrained %lux %lux", &start, &end) != 2) {
-      pr_crit("Couldn't parse bind_constrained arguments");
+    int retval = sscanf(buf, "bind_constrained %lx %lx", &start, &end);
+    pr_info("retval = %d start = %li end = %li", retval, *(long *)&start,
+            *(long *)&end);
+    if (retval != 2) {
+      pr_crit("Couldn't parse bind_constrained arguments pid=%d start=%lu "
+              "end=%lu",
+              current->pid, start, end);
       rc = -EINVAL;
-    }
-    if (ambix_bind_pid_constrained(current->pid, start, end)) {
+    } else if (ambix_bind_pid_constrained(current->pid, start, end)) {
       pr_crit("Couldn't bind in bind_constrained");
       rc = -EINVAL;
     }
