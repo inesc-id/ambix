@@ -170,16 +170,25 @@ BIND/UNBIND FUNCTIONS
 -------------------------------------------------------------------------------
 */
 
-static struct pid *PIDs[MAX_PIDS];
+struct ambix_proc_t {
+  struct pid *__pid;
+  unsigned long start_addr;
+  unsigned long end_addr;
+};
+
+// static struct pid *PIDs[MAX_PIDS];
+static struct ambix_proc_t PIDs[MAX_PIDS];
 size_t PIDs_size = 0;
 
 static DEFINE_MUTEX(PIDs_mtx);
 
-int ambix_bind_pid(const pid_t nr) {
+int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
+                               unsigned long end_addr) {
   struct pid *p = NULL;
   struct mutex *m = NULL;
   size_t i;
   int rc = 0;
+  int index = 0;
 
   p = find_get_pid(nr);
   if (!p) {
@@ -198,16 +207,20 @@ int ambix_bind_pid(const pid_t nr) {
   }
 
   for (i = 0; i < PIDs_size; ++i) {
-    if (PIDs[i] == p) {
+    if (PIDs[i].__pid == p) {
       pr_info("Already managing given PID.\n");
       rc = -1;
       goto release_return;
     }
   }
 
-  PIDs[PIDs_size++] = p;
+  index = PIDs_size++;
+  PIDs[index].__pid = p;
+  PIDs[index].start_addr = start_addr;
+  PIDs[index].end_addr = end_addr;
   p = NULL;
-  pr_info("Bound pid=%d.\n", nr);
+  pr_info("Bound pid=%d with start_addr=0x%lux and end_addr=0x%lux.\n", nr,
+          start_addr, end_addr);
 
 release_return:
   if (m)
@@ -215,6 +228,10 @@ release_return:
   if (p)
     put_pid(p);
   return rc;
+}
+
+int ambix_bind_pid(const pid_t nr) {
+  return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS);
 }
 
 int ambix_unbind_pid(const pid_t nr) {
@@ -228,8 +245,8 @@ int ambix_unbind_pid(const pid_t nr) {
   m = &PIDs_mtx;
 
   for (i = 0; i < PIDs_size; ++i) {
-    if (pid_nr(PIDs[i]) == nr) {
-      p = PIDs[i];
+    if (pid_nr(PIDs[i].__pid) == nr) {
+      p = PIDs[i].__pid;
       if (PIDs_size > 0) {
         PIDs[i] = PIDs[--PIDs_size];
       }
@@ -251,13 +268,13 @@ void refresh_pids(void)
 {
   size_t i;
   for (i = 0; i < PIDs_size; ++i) {
-    struct task_struct *t = get_pid_task(PIDs[i], PIDTYPE_PID);
+    struct task_struct *t = get_pid_task(PIDs[i].__pid, PIDTYPE_PID);
     if (t) {
       put_task_struct(t);
       continue;
     }
-    pr_info("Process %d has gone.\n", pid_nr(PIDs[i]));
-    put_pid(PIDs[i]);
+    pr_info("Process %d has gone.\n", pid_nr(PIDs[i].__pid));
+    put_pid(PIDs[i].__pid);
     PIDs[i] = PIDs[--PIDs_size];
   }
 }
@@ -529,20 +546,20 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
 
   pr_debug("Page walk. Mode:%s; n:%d/%d; last_pid:%d(%d); last_addr:%lx.\n",
            print_mode(pte_handler), ctx->n_found, ctx->n_to_find,
-           pid_nr(PIDs[lst_pid_idx]), lst_pid_idx, last_addr);
+           pid_nr(PIDs[lst_pid_idx].__pid), lst_pid_idx, last_addr);
 
   // start at lst_pid_idx's last_addr, walk through all pids and finish by
   // addresses less than last_addr's lst_pid_idx; (i.e go twice through idx ==
   // lst_pid_idx)
   for (i = lst_pid_idx; i != lst_pid_idx + PIDs_size + 1; ++i) {
     int idx = i % PIDs_size;
-    struct task_struct *t = get_pid_task(PIDs[idx], PIDTYPE_PID);
+    struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
     if (!t) {
       continue;
     }
 
     pr_debug("Walk iteration [%d] {pid:%d(%d); left:%lx; right: %lx}\n", i,
-             pid_nr(PIDs[idx]), idx, left, right);
+             pid_nr(PIDs[idx].__pid), idx, left, right);
 
     if (t->mm != NULL) {
       mmap_read_lock(t->mm);
@@ -554,7 +571,7 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
 
     if (ctx->n_found >= ctx->n_to_find) {
       pr_debug("Has found enough (%u) pages. Last pid is %d(%d).", ctx->n_found,
-               pid_nr(PIDs[idx]), idx);
+               pid_nr(PIDs[idx].__pid), idx);
       return idx;
     }
 
@@ -611,7 +628,7 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode) {
   *last_pid_idx = do_page_walk(pte_handler, ctx, *last_pid_idx, *last_addr);
   pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d(%d) "
            "last_addr:%lx;\n",
-           ctx->n_found, ctx->n_backup, pid_nr(PIDs[*last_pid_idx]),
+           ctx->n_found, ctx->n_backup, pid_nr(PIDs[*last_pid_idx].__pid),
            *last_pid_idx, *last_addr);
 
   if (ctx->n_found < ctx->n_to_find && (ctx->n_backup > 0)) {
@@ -638,9 +655,9 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
   pr_debug("Cleaning NVRAM PTEs");
 
   for (i = 0; i < PIDs_size; i++) {
-    t = get_pid_task(PIDs[i], PIDTYPE_PID);
+    t = get_pid_task(PIDs[i].__pid, PIDTYPE_PID);
     if (!t) {
-      pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i]));
+      pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
       continue;
     }
     ctx->curr_pid_idx = i;
@@ -1168,7 +1185,7 @@ static int do_migration(const addr_info_t *const found_addrs,
   for (i = 0; i < n_found; ++i) {
     unsigned long addr = (unsigned long)untagged_addr(found_addrs[i].addr);
     size_t idx = found_addrs[i].pid_idx;
-    struct task_struct *t = get_pid_task(PIDs[idx], PIDTYPE_PID);
+    struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
     if (!t) {
       continue;
     }

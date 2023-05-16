@@ -12,6 +12,7 @@
 #include <linux/proc_fs.h>  /* Necessary because we use the proc fs */
 #include <linux/seq_file.h> /* for seq_file */
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
 
@@ -85,7 +86,17 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   // */
   // del_timer_sync(&led_blink_timer);
 
-  if (!strcmp(buf, "bind")) {
+  if (!strcmp(buf, "bind_constrained")) {
+    unsigned long start, end;
+    if (sscanf(buf, "bind_constrained %lux %lux", &start, &end) != 2) {
+      pr_crit("Couldn't parse bind_constrained arguments");
+      rc = -EINVAL;
+    }
+    if (ambix_bind_pid_constrained(current->pid, start, end)) {
+      pr_crit("Couldn't bind in bind_constrained");
+      rc = -EINVAL;
+    }
+  } else if (!strcmp(buf, "bind")) {
     if (ambix_bind_pid(current->pid)) {
       rc = -EINVAL;
     }
