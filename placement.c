@@ -542,7 +542,8 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
 
   int i;
   unsigned long left = last_addr;
-  unsigned long right = MAX_ADDRESS;
+  // TODO changed this, not sure?
+  unsigned long right = PIDs[lst_pid_idx].end_addr;
 
   pr_debug("Page walk. Mode:%s; n:%d/%d; last_pid:%d(%d); last_addr:%lx.\n",
            print_mode(pte_handler), ctx->n_found, ctx->n_to_find,
