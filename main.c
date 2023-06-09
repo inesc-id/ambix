@@ -88,8 +88,9 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   // del_timer_sync(&led_blink_timer);
 
   if (!strncmp(buf, "bind_range ", 11)) {
-    unsigned long start, end;
-    int retval = sscanf(buf, "bind_range %lx %lx", &start, &end);
+    unsigned long start, end, allocation_site, size;
+    int retval = sscanf(buf, "bind_range %lx %lx %lx %lx", &start, &end,
+                        &allocation_site, &size);
     pr_info("retval = %d start = %li end = %li", retval, *(long *)&start,
             *(long *)&end);
     if (retval != 2) {
@@ -97,14 +98,16 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
               "end=%lu",
               current->pid, start, end);
       rc = -EINVAL;
-    } else if (ambix_bind_pid_constrained(current->pid, start, end)) {
+    } else if (ambix_bind_pid_constrained(current->pid, start, end,
+                                          allocation_site, size)) {
       pr_crit("Couldn't bind in bind_range");
       rc = -EINVAL;
     }
   } else if (!strncmp(buf, "bind_range_pid", 14)) {
     int pid, retval;
-    unsigned long start, end;
-    retval = sscanf(buf, "bind_range_pid %d %lx %lx", &pid, &start, &end);
+    unsigned long start, end, allocation_site, size;
+    retval = sscanf(buf, "bind_range_pid %d %lx %lx %lx %lx", &pid, &start,
+                    &end, &allocation_site, &size);
     pr_info("retval = %d pid = %d start = %li end = %li", retval, pid,
             *(long *)&start, *(long *)&end);
     if (retval != 3) {
@@ -112,7 +115,8 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
               "end=%lu",
               pid, start, end);
       rc = -EINVAL;
-    } else if (ambix_bind_pid_constrained(pid, start, end)) {
+    } else if (ambix_bind_pid_constrained(pid, start, end, allocation_site,
+                                          size)) {
       pr_crit("Couldn't bind in bind_range_pid");
       rc = -EINVAL;
     }

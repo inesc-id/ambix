@@ -7,7 +7,7 @@ int ambix_check_memory(void);
 
 int ambix_bind_pid(pid_t pid);
 int ambix_bind_pid_constrained(pid_t pid, unsigned long start_addr,
-                               unsigned long end_addr);
+                               unsigned long end_addr, unsigned long allocation_site, unsigned long size);
 int ambix_unbind_pid(pid_t pid);
 
 // int ambix_mem_walk(int n, int mode);

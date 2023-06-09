@@ -174,6 +174,8 @@ struct ambix_proc_t {
   struct pid *__pid;
   unsigned long start_addr;
   unsigned long end_addr;
+  unsigned long allocation_site;
+  unsigned long size;
 };
 
 // static struct pid *PIDs[MAX_PIDS];
@@ -183,7 +185,7 @@ size_t PIDs_size = 0;
 static DEFINE_MUTEX(PIDs_mtx);
 
 int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
-                               unsigned long end_addr) {
+                               unsigned long end_addr, unsigned long allocation_site, unsigned long size) {
   struct pid *p = NULL;
   struct mutex *m = NULL;
   size_t i;
@@ -218,6 +220,8 @@ int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
   PIDs[index].__pid = p;
   PIDs[index].start_addr = start_addr;
   PIDs[index].end_addr = end_addr;
+  PIDs[index].allocation_site = allocation_site;
+  PIDs[index].size = size;
   p = NULL;
   pr_info("Bound pid=%d with start_addr=%lx and end_addr=%lx.\n", nr,
           start_addr, end_addr);
@@ -231,7 +235,7 @@ release_return:
 }
 
 int ambix_bind_pid(const pid_t nr) {
-  return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS);
+  return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0);
 }
 
 int ambix_unbind_pid(const pid_t nr) {
