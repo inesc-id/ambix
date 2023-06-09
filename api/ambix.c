@@ -8,7 +8,7 @@ int write_procfs(char* command) {
   if (!f)
     goto fail_return;
 
-  fprintf(f, command);
+  fprintf(f, "%s", command);
 
   fclose(f);
 
@@ -19,15 +19,15 @@ fail_return:
   return 1;
 }
 
-int bind_range(unsigned long start, unsigned long end) {
+int bind_range(unsigned long start, unsigned long end, unsigned long allocation_site, unsigned long size) {
   char buffer[1024];
-  snprintf(buffer, 1023, "bind_range %lx %lx", start, end);
+  snprintf(buffer, 1023, "bind_range %lx %lx %lx %lx", start, end, allocation_site, size);
   return write_procfs(buffer);
 }
 
-int bind_range_pid(int pid, unsigned long start, unsigned long end) {
+int bind_range_pid(int pid, unsigned long start, unsigned long end, unsigned long allocation_site, unsigned long size) {
   char buffer[1024];
-  snprintf(buffer, 1023, "bind_range_pid %d %lx %lx", pid, start, end);
+  snprintf(buffer, 1023, "bind_range_pid %d %lx %lx %lx %lx", pid, start, end, allocation_site, size);
   return write_procfs(buffer);
 }
 
