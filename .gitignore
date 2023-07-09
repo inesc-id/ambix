@@ -78,5 +78,7 @@ dkms.conf
 # .nfs files are created when an open file is removed but is still being accessed
 .nfs*
 
-.cache
-compile_commands.json
+**/.cache
+**/compile_commands.json
+**/disk.qcow2
+

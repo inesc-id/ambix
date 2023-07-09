@@ -68,6 +68,6 @@ status:
 
 
 gen_clangd_config:
-	@bear --verbose -- make
+	@bear -- make
 
 .PHONY: insmod rmmod status run gen_clangd_config
