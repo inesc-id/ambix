@@ -2,15 +2,17 @@ CONFIG_MODULE_SIG=n
 CC = gcc
 CFLAGS = -Wall -lnuma -pthread -lm
 
-MODULE_FILENAME=ambix_hyb-mod
-obj-m +=  $(MODULE_FILENAME).o
+MODULE_FILENAME=ambix-mod
+obj-m +=  ambix-mod.o
 KO_FILE=$(MODULE_FILENAME).ko
 
 export KROOT=${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build
 
 all: ctl module bind unbind
 
-module: ambix_hyb-mod.c ambix.h
+install: all remove insert
+
+module: ambix-mod.c ambix.h
 	@$(MAKE) -C $(KROOT) M=$(PWD) modules -j 12
 
 module_install:
@@ -19,6 +21,7 @@ module_install:
 clean:
 	@$(MAKE) -C $(KROOT) M=$(PWD) clean
 	rm -rf   Module.symvers modules.order *.o *.mod socket
+	rm ambix-daemon
 	rm -rf *.x
 
 insert:
@@ -31,7 +34,7 @@ force-remove:
 	sudo rmmod -f $(MODULE_FILENAME)
 
 ctl: ambix_hyb-ctl.c ambix.h
-	${CC} ${CFLAGS} -o ambix_hyb-ctl.o ambix_hyb-ctl.c
+	${CC} ${CFLAGS} -o ambix-daemon ambix_hyb-ctl.c
 
 client: client.c client_2.c ambix-client.c ambix.h ambix-client.h
 	${CC} ${CFLAGS} -o client.o ambix-client.c client.c

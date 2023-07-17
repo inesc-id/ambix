@@ -69,8 +69,8 @@ typedef struct req {
 
 // Misc:
 #define MAX_COMMAND_SIZE 80
-#define DRAM_TARGET 0.12
-#define DRAM_LIMIT 0.13
+#define DRAM_TARGET 0.10
+#define DRAM_LIMIT 0.11
 #define NVRAM_TARGET 0.95
 #define NVRAM_LIMIT 0.98
 #define MAX_INTERVAL_MUL 1

@@ -13,6 +13,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>  // Macros used to mark up functions e.g., __init __exit
 #include <linux/kernel.h>  // Contains types, macros, functions for the kernel
+#include <linux/kprobes.h>
 #include <linux/kthread.h>
 #include <linux/mempolicy.h>
 #include <linux/module.h>  // Core header for loading LKMs into the kernel
@@ -38,7 +39,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Miguel Marques");
 MODULE_DESCRIPTION("Bandwidth-aware page replacement");
-MODULE_VERSION("0.3");
+MODULE_VERSION("1.11");
 MODULE_INFO(vermagic, "5.8.5-patched SMP mod_unload modversions ");
 
 struct sock *nl_sock;
@@ -63,8 +64,6 @@ int n_found = 0;
 int n_backup = 0;
 int n_switch_backup = 0;
 
-
-
 /*
 -------------------------------------------------------------------------------
 
@@ -76,7 +75,7 @@ HELPER FUNCTIONS
 
 
 static int find_target_process(pid_t pid) {  // to find the task struct by process_name or pid
-    if (n_pids > MAX_PIDS) {
+    if (n_pids >= MAX_PIDS) {
         pr_info("PLACEMENT: Managed PIDs at capacity.\n");
         return 0;
     }
@@ -353,11 +352,6 @@ static int pte_callback_nvram_intensive(pte_t *ptep, unsigned long addr, unsigne
         }
     }
 
-    pte_t old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-    *ptep = pte_mkold(old_pte); // unset modified bit
-    *ptep = pte_mkclean(old_pte); // unset dirty bit
-    ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
-
     return 0;
 }
 static int pte_callback_nvram_switch(pte_t *ptep, unsigned long addr, unsigned long next,
@@ -387,11 +381,6 @@ static int pte_callback_nvram_switch(pte_t *ptep, unsigned long addr, unsigned l
             switch_backup_addrs[n_switch_backup++].pid_retval = curr_pid;
         }
     }
-
-    pte_t old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-    *ptep = pte_mkold(old_pte); // unset modified bit
-    *ptep = pte_mkclean(old_pte); // unset dirty bit
-    ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
 
     return 0;
 }
@@ -457,13 +446,11 @@ static int do_page_walk(struct mm_walk_ops mem_walk_ops, int last_pid, unsigned 
     mm = task_items[last_pid]->mm;
     curr_pid = task_items[last_pid]->pid;
 
-    pr_info("ACK LOCK 1\n");
-    down_read(&mm->mmap_lock);
-    pr_info("PLACEMENT: START pagewalk 1\n");
-    walk_page_range(mm, last_addr, MAX_ADDRESS, &mem_walk_ops, NULL);
-    pr_info("PLACEMENT: END pagewalk 1\n");
-    up_read(&mm->mmap_lock);
-    pr_info("ACK UNLOCK 1\n");
+    if(mm != NULL) {
+        mmap_read_lock(mm);
+        walk_page_range(mm, last_addr, MAX_ADDRESS, &mem_walk_ops, NULL);
+        mmap_read_unlock(mm);
+    }
 
     if (n_found >= n_to_find) {
         return last_pid;
@@ -474,13 +461,11 @@ static int do_page_walk(struct mm_walk_ops mem_walk_ops, int last_pid, unsigned 
         mm = task_items[i]->mm;
         curr_pid = task_items[i]->pid;
 
-        pr_info("ACK LOCK 2\n");
-        down_read(&mm->mmap_lock);
-        pr_info("PLACEMENT: START pagewalk 2\n");
-        walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
-        pr_info("PLACEMENT: END pagewalk 2\n");
-        up_read(&mm->mmap_lock);
-        pr_info("ACK UNLOCK 2\n");
+        if(mm != NULL) {
+            mmap_read_lock(mm);
+            walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
+            mmap_read_unlock(mm);
+        }
 
         if (n_found >= n_to_find) {
             return i;
@@ -491,28 +476,26 @@ static int do_page_walk(struct mm_walk_ops mem_walk_ops, int last_pid, unsigned 
         mm = task_items[i]->mm;
         curr_pid = task_items[i]->pid;
 
-        pr_info("ACK LOCK 3\n");
-        down_read(&mm->mmap_lock);
-        pr_info("PLACEMENT: START pagewalk 3\n");
-        walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
-        pr_info("PLACEMENT: END pagewalk 3\n");
-        up_read(&mm->mmap_lock);
-        pr_info("ACK UNLOCK 3\n");
+        if(mm != NULL) {
+            mmap_read_lock(mm);
+            walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
+            mmap_read_unlock(mm);
+        }
         if (n_found >= n_to_find) {
             return i;
         }
     }
+
     // finish cycle at last_pid->last_addr
     mm = task_items[last_pid]->mm;
     curr_pid = task_items[last_pid]->pid;
 
-    pr_info("ACK LOCK 4\n");
-    down_read(&mm->mmap_lock);
-    pr_info("PLACEMENT: START pagewalk 4\n");
-    walk_page_range(mm, 0, last_addr, &mem_walk_ops, NULL);
-    pr_info("PLACEMENT: END pagewalk 4\n");
-    up_read(&mm->mmap_lock);
-    pr_info("ACK UNLOCK 4\n");
+    if(mm != NULL) {
+        mmap_read_lock(mm);
+        walk_page_range(mm, 0, last_addr+1, &mem_walk_ops, NULL);
+        mmap_read_unlock(mm);
+    }
+
     return last_pid;
 }
 
@@ -897,7 +880,8 @@ MODULE INIT/EXIT
 
 
 static int __init _on_module_init(void) {
-    pr_info("PLACEMENT-MIXM: Hello from module!\n");
+    int rc;
+    pr_info("PLACEMENT-HYB: Hello from module!\n");
 
     task_items = kmalloc(sizeof(struct task_struct *) * MAX_PIDS, GFP_KERNEL);
     found_addrs = kmalloc(sizeof(addr_info_t) * MAX_N_FIND, GFP_KERNEL);
@@ -919,7 +903,7 @@ static int __init _on_module_init(void) {
 }
 
 static void __exit _on_module_exit(void) {
-    pr_info("PLACEMENT-MIXM: Goodbye from module!\n");
+    pr_info("PLACEMENT-HYB: Goodbye from module!\n");
     netlink_kernel_release(nl_sock);
 
     kfree(task_items);
