@@ -8,7 +8,7 @@ KO_FILE=$(MODULE_FILENAME).ko
 
 export KROOT=${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build
 
-all: ctl module bind unbind
+all: daemon module bind unbind
 
 install: all remove insert
 
@@ -33,8 +33,8 @@ remove:
 force-remove:
 	sudo rmmod -f $(MODULE_FILENAME)
 
-ctl: ambix_hyb-ctl.c ambix.h
-	${CC} ${CFLAGS} -o ambix-daemon ambix_hyb-ctl.c
+daemon: ambix-daemon.c ambix.h
+	${CC} ${CFLAGS} -o ambix-daemon ambix-daemon.c
 
 client: client.c client_2.c ambix-client.c ambix.h ambix-client.h
 	${CC} ${CFLAGS} -o client.o ambix-client.c client.c
