@@ -1,0 +1,33 @@
+[  293.433818] ambix.PLACEMENT: Page walk has completed. Found 0 of 131071 pages.
+[  293.433840] ambix.PLACEMENT: Memory walk complete. found:0; backed-up:131071; last_pid:3634(0) last_addr:0;
+[  293.433845] ambix.PLACEMENT: Using backup addresses (require 131071, has 131071)
+[  293.434468] ambix.PLACEMENT: Found 131071 candidates (411123us)
+[  293.434471] ambix.PLACEMENT: DO MIGRATION: 131071 pages -> NVRAM
+[  293.440280] ambix.PLACEMENT: Kernel_move_pages status = 0
+[  293.440285] ambix.PLACEMENT: Page list is empty!
+[  293.440288] ambix.PLACEMENT: DRAM migration of 0 pages took 5664us
+[  293.440290] ambix.PLACEMENT: DRAM usage is above the limit, migrating pages
+[  293.440293] ambix.PLACEMENT: Amount of bytes needed: 2016556523
+[  293.440295] ambix.PLACEMENT: DRAM->NVRAM [U]: Migrated 0 out of 131071 pages. (416796us)
+[  294.452374] ambix.PLACEMENT: Memory migration routine
+[  294.452396] ambix.PLACEMENT: Current DRAM Usage: 8
+[  294.452400] ambix.PLACEMENT: Current NVRAM Usage: 0
+[  294.452498] ambix.PLACEMENT: ppm_bw: 0, NVRAM_BW_THRESH: 10
+[  294.452503] ambix.PLACEMENT: Thresholds: DRAM limit 8 of 6; NVRAM target 0 of 95
+[  294.452510] ambix.PLACEMENT: It was requested 131071 page migrations
+[  294.452516] ambix.PLACEMENT: mem_walk: last_pid_idx = 0, last_addr = 0
+[  294.452527] ambix.PLACEMENT: Page walk. Mode:DRAM; n:0/131071; last_pid:3634(0); last_addr:0.
+[  294.452532] ambix.PLACEMENT: Walk iteration [0] {pid:3634(0); left:0; right: ffff880000000000}
+[  294.510692] ambix.PLACEMENT: Page walk has completed. Found 0 of 131071 pages.
+[  294.510699] ambix.PLACEMENT: Memory walk complete. found:0; backed-up:0; last_pid:3634(0) last_addr:0;
+[  294.510702] ambix.PLACEMENT: Found 0 candidates (56669us)
+[  294.510705] ambix.PLACEMENT: DO MIGRATION: 0 pages -> NVRAM
+[  294.510864] ambix.PLACEMENT: Page list is empty!
+[  294.510867] ambix.PLACEMENT: DRAM migration of 0 pages took 157us
+[  294.510868] ambix.PLACEMENT: DRAM usage is above the limit, migrating pages
+[  294.510870] ambix.PLACEMENT: Amount of bytes needed: 2016556523
+[  294.510872] ambix.PLACEMENT: DRAM->NVRAM [U]: Migrated 0 out of 131071 pages. (56836us)
+[  295.540421] ambix.PLACEMENT: Memory migration routine
+[  295.540427] ambix.PLACEMENT: Current DRAM Usage: 4
+[  295.540429] ambix.PLACEMENT: Current NVRAM Usage: 0
+
