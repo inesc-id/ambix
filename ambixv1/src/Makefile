@@ -3,12 +3,13 @@ CC = gcc
 CFLAGS = -Wall -lnuma -pthread -lm
 
 MODULE_FILENAME=ambix-mod
-obj-m +=  ambix-mod.o
+obj-m +=  ambix.o
+ambix-objs := ambix-mod.o find_kallsyms_lookup_name.o
 KO_FILE=$(MODULE_FILENAME).ko
 
 export KROOT=${DEVKERNELROOT}/lib/modules/$(shell uname -r)/build
 
-all: daemon module bind unbind
+all: daemon module bind unbind pcm
 
 install: all remove insert
 
@@ -25,13 +26,13 @@ clean:
 	rm -rf *.x
 
 insert:
-	sudo insmod $(KO_FILE)
+	sudo insmod ./ambix.ko
 
 remove:
-	sudo rmmod $(MODULE_FILENAME)
+	sudo rmmod ambix
 
 force-remove:
-	sudo rmmod -f $(MODULE_FILENAME)
+	sudo rmmod -f ambix
 
 daemon: ambix-daemon.c ambix.h
 	${CC} ${CFLAGS} -o ambix-daemon ambix-daemon.c
@@ -45,3 +46,7 @@ bind: bind.c ambix-client.c ambix-client.h ambix.h
 
 unbind: unbind.c ambix-client.c ambix-client.h ambix.h
 	${CC} ${CFLAGS} -o unbind.o ambix-client.c unbind.c
+
+pcm: pcm-ambix.h
+	cd ./pcm-mod && $(MAKE) -j 32 && mv pcm-memory.x ../
+	cd ..

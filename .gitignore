@@ -83,3 +83,4 @@ dkms.conf
 **/disk.qcow2
 
 vm/ubuntu.iso
+.vscode/settings.json
