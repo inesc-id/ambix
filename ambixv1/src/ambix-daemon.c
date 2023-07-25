@@ -110,16 +110,16 @@ HELPER FUNCTIONS
 */
 
 int check_memdata(memdata_t *md) {
-  if ((md == NULL) || !BETWEEN(md->sys_dramReads, 0, DRAM_BW_MAX) ||
-      !BETWEEN(md->sys_dramWrites, 0, DRAM_BW_MAX) ||
-      !BETWEEN(md->sys_pmmReads, 0, NVRAM_BW_MAX) ||
-      !BETWEEN(md->sys_pmmWrites, 0, NVRAM_BW_MAX) ||
-      !BETWEEN(md->sys_pmmAppBW, 0, NVRAM_BW_MAX) ||
-      !BETWEEN(md->sys_pmmMemBW, 0, NVRAM_BW_MAX)) {
-    return 0;
-  }
+  // if ((md == NULL) || !BETWEEN(md->sys_dramReads, 0, DRAM_BW_MAX) ||
+  //     !BETWEEN(md->sys_dramWrites, 0, DRAM_BW_MAX) ||
+  //     !BETWEEN(md->sys_pmmReads, 0, NVRAM_BW_MAX) ||
+  //     !BETWEEN(md->sys_pmmWrites, 0, NVRAM_BW_MAX) ||
+  //     !BETWEEN(md->sys_pmmAppBW, 0, NVRAM_BW_MAX) ||
+  //     !BETWEEN(md->sys_pmmMemBW, 0, NVRAM_BW_MAX)) {
+  //   return 0;
+  // }
 
-  return 1;
+  return md != NULL;
 }
 
 memdata_t *read_memdata() {
@@ -567,6 +567,7 @@ void *memcheck_placement(void *args) {
           }
           if (pmm_bw > NVRAM_BW_THRESH) {
             pthread_mutex_lock(&placement_lock);
+            printf("Waiting for send_find\n");
             send_find(0, NVRAM_CLEAR);
             usleep(clear_interval);
             if (dram_usage >= DRAM_TARGET) {

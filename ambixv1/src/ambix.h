@@ -7,6 +7,7 @@
 #define NVRAMWRCHK_INTERVAL PCM_DELAY * 1000
 #define CLEAR_DELAY 50
 #define NVRAM_BW_THRESH 10
+#define WALK_PAGE_RANGE 1
 
 // BW info (for checking pcm output)
 #define DRAM_BW_MAX 50000
@@ -68,8 +69,8 @@ typedef struct req
 
 // Misc:
 #define MAX_COMMAND_SIZE 80
-#define DRAM_TARGET 0.10
-#define DRAM_LIMIT 0.11
+#define DRAM_TARGET 0.60
+#define DRAM_LIMIT 0.62
 #define NVRAM_TARGET 0.95
 #define NVRAM_LIMIT 0.98
 #define MAX_INTERVAL_MUL 1

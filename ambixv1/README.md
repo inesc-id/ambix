@@ -21,7 +21,7 @@ It also leverages a modified version of PCM (https://github.com/opcm/pcm).
   Optional, but recommended:
   
   2. Disable NUMA balancing # `echo 0 > /proc/sys/kernel/numa_balancing`
-  3. Set swappinness to 0 # `sysctl vm.swappiness=10`
+  3. Set swappinness to 0 # `sysctl vm.swappiness=0`
   4. Disable THPs # `echo never >/sys/kernel/mm/transparent_hugepage/enabled`
 
 ## Ambix Configuration:
