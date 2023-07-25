@@ -7,6 +7,8 @@ int bind(void);
 int unbind(void);
 int bind_pid(int pid);
 int unbind_pid(int pid);
+int unbind_range(unsigned long start, unsigned long end);
+int unbind_range_pid(int pid, unsigned long start, unsigned long end);
 int enable(void);
 int disable(void);
 #endif

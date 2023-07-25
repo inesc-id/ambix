@@ -57,6 +57,8 @@
 
 #define NVRAM_BW_THRESH 10
 
+#define CLEAR_PTE_THRESHOLD 501752
+
 #define MAX_N_FIND 131071U
 #define MAX_N_SWITCH                                                           \
   (MAX_N_FIND - 1) /                                                           \
@@ -81,8 +83,8 @@
 
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value
 // than NVRAM nodes' ids due to the memory policy set in client-placement.c
-static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {1}; // FIXME {2}
+static const int DRAM_NODES[] = {0, 1};
+static const int NVRAM_NODES[] = {2}; // FIXME {2}
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
@@ -92,6 +94,10 @@ unsigned long g_last_addr_nvram = 0;
 
 int g_last_pid_dram = 0;
 int g_last_pid_nvram = 0;
+
+unsigned long long pages_walked = 0;
+unsigned long last_addr_clear = 0;
+
 
 #define M(RET, NAME, SIGNATURE)                                                \
   typedef RET(*NAME##_t) SIGNATURE;                                            \
@@ -495,6 +501,12 @@ static int pte_callback_nvram_switch(pte_t *ptep, unsigned long addr,
 static int pte_callback_nvram_clear(pte_t *ptep, unsigned long addr,
                                     unsigned long next, struct mm_walk *walk) {
   pte_t old_pte;
+  pages_walked++;
+
+  if (pages_walked > CLEAR_PTE_THRESHOLD) {
+    last_addr_clear = addr;
+    return 1; 
+  }
   // If  page is not present, write protected, or page is not in NVRAM node
   if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
       !contains(pfn_to_nid(pte_pfn(*ptep)), NVRAM_MODE)) {
@@ -656,6 +668,7 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
   struct task_struct *t = NULL;
   struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_nvram_clear};
   int i;
+  unsigned long prev_last_addr = 0;
 
   pr_debug("Cleaning NVRAM PTEs");
 
@@ -667,7 +680,13 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
     }
     ctx->curr_pid_idx = i;
     spin_lock(&t->mm->page_table_lock);
-    g_walk_page_range(t->mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
+    // TODO segmentar isto
+    do {
+      pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr, last_addr_clear);  
+      prev_last_addr = last_addr_clear;
+      pages_walked = 0;
+      g_walk_page_range(t->mm, last_addr_clear, MAX_ADDRESS, &mem_walk_ops, ctx);
+    } while (prev_last_addr != last_addr_clear);
     spin_unlock(&t->mm->page_table_lock);
     put_task_struct(t);
   }

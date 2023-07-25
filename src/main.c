@@ -93,7 +93,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
                         &allocation_site, &size);
     pr_info("retval = %d start = %li end = %li", retval, *(long *)&start,
             *(long *)&end);
-    if (retval != 2) {
+    if (retval != 4) {
       pr_crit("Couldn't parse bind_range arguments pid=%d start=%lu "
               "end=%lu",
               current->pid, start, end);
@@ -110,7 +110,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
                     &end, &allocation_site, &size);
     pr_info("retval = %d pid = %d start = %li end = %li", retval, pid,
             *(long *)&start, *(long *)&end);
-    if (retval != 3) {
+    if (retval != 5) {
       pr_crit("Couldn't parse bind_range_pid arguments pid=%d start=%lu "
               "end=%lu",
               pid, start, end);
