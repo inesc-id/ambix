@@ -8,9 +8,15 @@
 - Numactl (>= 2.0.12)
 
 ## Build and Run
-1. Check the machine's topology using `numactl -H`
+1. Disable Linux's default numa node balancing, swappiness and Transparent Huge Pages
+```sh
+echo 0 > /proc/sys/kernel/numa_balancing
+sysctl vm.swappiness=0
+echo never > /sys/kernel/mm/transparent_hugepage/enabled
+```
+2. Check the machine's topology using `numactl -H`
     - Note: The NVRAM numa node ID should always be higher than the rest of the IDs.
-2. Change the following files according to the result of step above
+3. Change the following files according to the result of step above
 
 **perf_counters.c**
 ```C
@@ -37,11 +43,11 @@ static const int NVRAM_NODES[] = {2};
 
 #define NVRAM_BW_THRESH 10
 ```
-3. Build the kernel module using GNU Make.
+4. Build the kernel module using GNU Make.
 ```sh
 make
 ```
-4. Insert the module.
+5. Insert the module.
 ```sh
 make insert
 # or

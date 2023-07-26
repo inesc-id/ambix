@@ -10,7 +10,6 @@
  * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
-#define DEBUG
 #define pr_fmt(fmt) "ambix.PLACEMENT: " fmt
 
 #include <generated/utsrelease.h>

@@ -4,13 +4,11 @@
  * @author  INESC-ID
  * @date    26 jul 2023
  * @version 2.1.0
- * @brief  Kernel module init, cleanup and procfs handling routines. Intended for
- * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
- * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code implemented by miguel marques
- * <miguel.soares.marques@tecnico.ulisboa.pt>
+ * @brief  Kernel module init, cleanup and procfs handling routines. Intended
+ * for the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
+ * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code implemented by miguel
+ * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
-
-#define DEBUG
 
 #include <linux/compiler.h>
 #include <linux/init.h>
@@ -77,7 +75,8 @@ static int kmod_show(struct seq_file *s, void *private) {
 }
 
 /**
- * Write handler, responsible for parsing commands and calling the appropriate function
+ * Write handler, responsible for parsing commands and calling the appropriate
+ * function
  *
  */
 static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
@@ -116,7 +115,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     retval = sscanf(buf, "bind_range_pid %d %lx %lx %lx %lx", &pid, &start,
                     &end, &allocation_site, &size);
     pr_debug("retval = %d pid = %d start = %li end = %li", retval, pid,
-            *(long *)&start, *(long *)&end);
+             *(long *)&start, *(long *)&end);
     if (retval != 5) {
       pr_crit("Couldn't parse bind_range_pid arguments pid=%d start=%lu "
               "end=%lu",
@@ -198,7 +197,6 @@ static void work_queue_routine(struct work_struct *dummy) {
   }
 }
 
-
 /**
  * Initialize the job queue
  *
@@ -227,7 +225,8 @@ void work_queue_cleanup(void) {
  * Looks up non exported kernel symbols from /proc/kallsyms
  * Initializes perf counters for DRAM and NVRAM
  * Creates an entry in procfs (at /proc/ambix)
- * Calls ambix_init, responsible for the initialization of the necessary data structures
+ * Calls ambix_init, responsible for the initialization of the necessary data
+ * structures
  *
  */
 int init(void) {
