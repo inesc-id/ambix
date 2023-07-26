@@ -39,7 +39,7 @@ static bool g_show_aggregates = true;
 static bool g_perf_enabled = true;
 
 /**
- * This function is called for each "step" of a sequence
+ * Handler to generate output when reading from /proc/ambix
  *
  */
 static int kmod_show(struct seq_file *s, void *private) {
@@ -72,6 +72,10 @@ static int kmod_show(struct seq_file *s, void *private) {
   return 0;
 }
 
+/**
+ * Write handler, responsible for parsing commands and calling the appropriate function
+ *
+ */
 static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
                                size_t count, loff_t *ppos) {
   char *buf = NULL;
@@ -155,6 +159,10 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   return rc;
 }
 
+/**
+ * Open Handler, call single_open (<linux/seq_file.h>)
+ *
+ */
 static int kmod_proc_open(struct inode *node, struct file *file) {
   return single_open(file, kmod_show, NULL);
 };
@@ -174,6 +182,11 @@ static unsigned g_time_interval = 1000;
 
 static void work_queue_routine(struct work_struct *dummy);
 static DECLARE_DELAYED_WORK(g_task, work_queue_routine);
+
+/**
+ * Call the main Ambix function every g_time_interval ms
+ *
+ */
 static void work_queue_routine(struct work_struct *dummy) {
   ambix_check_memory();
   if (!g_work_queue_die) {
@@ -181,23 +194,39 @@ static void work_queue_routine(struct work_struct *dummy) {
   }
 }
 
+
+/**
+ * Initialize the job queue
+ *
+ */
 int work_queue_init(void) {
   pr_debug("Initializing work queue");
-  // g_workqueue = create_workqueue(WORK_QUEUE_NAME);
   work_queue_routine(NULL);
   return 0;
 }
 
+/**
+ * Cleanup the job queue
+ *
+ */
 void work_queue_cleanup(void) {
   pr_debug("Deinitializing work queue");
   g_work_queue_die = true;
   cancel_delayed_work_sync(&g_task);
-  // destroy_workqueue(g_workqueue);
 }
 
 // ---------------------------------------------------------------------------------
 
-int init_module(void) {
+/**
+ * Initializes the kernel module
+ *
+ * Looks up non exported kernel symbols from /proc/kallsyms
+ * Initializes perf counters for DRAM and NVRAM
+ * Creates an entry in procfs (at /proc/ambix)
+ * Calls ambix_init, responsible for the initialization of the necessary data structures
+ *
+ */
+int init(void) {
   struct proc_dir_entry *entry;
   int rc;
 
@@ -242,7 +271,13 @@ int init_module(void) {
   return 0;
 }
 
-void cleanup_module(void) {
+/**
+ * Cleanup the kernel module
+ *
+ * Responsible for freeing all the resources acquired in init_module.
+ *
+ */
+void cleanup(void) {
   pr_info("release\n");
   work_queue_cleanup();
   remove_proc_entry(PROC_NAME, NULL);
@@ -250,3 +285,6 @@ void cleanup_module(void) {
   perf_counters_disable();
   perf_counters_cleanup();
 }
+
+module_init(init);
+module_exit(cleanup);
