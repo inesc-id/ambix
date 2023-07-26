@@ -1,5 +1,13 @@
 #define pr_fmt(fmt) "ambix.tsc: " fmt
-
+/**
+ * @file    tsc.c
+ * @author  INESC-ID
+ * @date    26 jul 2023
+ * @version 2.1.0
+ * @brief  Helper functions to convert clock cycles to seconds. Intended for
+ * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
+ * <ilia.kuzmin@tecnico.ulisboa.pt>
+ */
 #include <linux/delay.h>
 
 #include "tsc.h"
@@ -9,8 +17,6 @@ static u64 _rdtsc_rate;
 inline u64 tsc_rd(void) {
   u32 lo, hi;
   __asm__ __volatile__("lfence;rdtsc" : "=a"(lo), "=d"(hi));
-  //__asm__ __volatile__("rdtscp" : "=a" (lo), "=d" (hi) : : "rcx");
-  //__asm__ __volatile__("mfence;rdtsc" : "=a" (lo), "=d" (hi));
   return (u64)hi << 32 | lo;
 }
 
@@ -26,6 +32,10 @@ void tsc_init(void) {
   }
 }
 
+/**
+ * Convert an amount of clock cycles to msec
+ *
+ */
 u64 tsc_to_msec(u64 tsc) {
   if (!_rdtsc_rate) {
     tsc_init();
@@ -33,6 +43,10 @@ u64 tsc_to_msec(u64 tsc) {
   return tsc / (_rdtsc_rate / 1000);
 }
 
+/**
+ * Convert an amount of clock cycles to msec
+ *
+ */
 u64 tsc_to_usec(u64 tsc) {
   if (!_rdtsc_rate) {
     tsc_init();
@@ -41,6 +55,10 @@ u64 tsc_to_usec(u64 tsc) {
   return ((tsc & 0x3FFFFFFFFFFFFFULL) * 1000) / (_rdtsc_rate / 1000);
 }
 
+/**
+ * Convert an amount of clock cycles to msec
+ *
+ */
 u64 tsc_to_nsec(u64 tsc) {
   if (!_rdtsc_rate) {
     tsc_init();
@@ -49,6 +67,10 @@ u64 tsc_to_nsec(u64 tsc) {
   return ((tsc & 0xFFFFFFFFFFFULL) * 1000000) / (_rdtsc_rate / 1000);
 }
 
+/**
+ * Convert an amount of clock cycles to msec
+ *
+ */
 u64 tsc_from_usec(u64 usec) {
   if (!_rdtsc_rate) {
     tsc_init();

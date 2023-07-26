@@ -1,27 +1,27 @@
-//#define DEBUG
+/**
+ * @file    perf_counters.c
+ * @author  INESC-ID
+ * @date    26 jul 2023
+ * @version 2.1.0
+ * @brief  Functions responsible for collecting nvram and dcpmm bandwidth usage data. intended for
+ * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
+ * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code implemented by miguel marques
+ * <miguel.soares.marques@tecnico.ulisboa.pt>
+ */
 #define pr_fmt(fmt) "ambix.perf_counters: " fmt
-
 #include <linux/perf_event.h>
 
 #include "perf_counters.h"
 
-static u32 CPUs[] = {0}; //, 16}; //0, 16
+// CHANGE DEPENDING ON HARDWARE CONFIGURATION
+static u32 CPUs[] = {0}; // We only read events from the CPU in numa node 0
 static size_t CPUs_size = ARRAY_SIZE(CPUs);
-// static size_t CPUs_size = 0;
 
 static u32 IMCs[] = {13, 14, 15, 16, 17, 18};
-// static u32 IMCs[] = {10};
 
 static size_t IMCs_size = ARRAY_SIZE(IMCs);
 
-// static DEFINE_PER_CPU(struct perf_event *, ppm_bandwidth_read);
-// static DEFINE_PER_CPU(struct perf_event *, ppm_bandwidth_write);
-
-// pid == -1 and cpu >= 0
-// This  measures all processes/threads on the specified CPU.  This requires
-// CAP_PERFMON  (since  Linux  5.8)  or  CAP_SYS_ADMIN   capability   or   a
-// /proc/sys/kernel/perf_event_paranoid value of less than 1.
-
+// event numbers obtained via perf list --details
 static struct counter_t COUNTERs[] = {
     {.event = 0xe3,
      .mult = 64,
@@ -51,7 +51,7 @@ static size_t *PMM_READs, *PMM_WRITEs, *DDR_READs, *DDR_WRITEs;
 static uint8_t PMM_READs_size, PMM_WRITEs_size, DDR_READs_size, DDR_WRITEs_size;
 
 struct perf_event **EVENTs = NULL;
-size_t EVENTs_size = 0; // sizeof(EVENTs) / sizeof(EVENTs[0]);
+size_t EVENTs_size = 0;
 
 u64 *EVENTs_value = NULL;
 unsigned long *EVENTs_time = NULL;
@@ -209,7 +209,6 @@ static u64 read_aggregate(const size_t *const aggregate, const u8 size) {
         value /= sec;
       }
       sum += (value * info->mult / info->fact);
-      // pr_debug("[%d]: %lld, %lld\n", ctr, value, sec);
     }
   }
   return sum;
@@ -241,14 +240,3 @@ void perf_counters_disable(void) {
 
 u64 jiffies_to_sec(const u64 jf) { return (jf + HZ / 2) / HZ; }
 
-// u64 jiffies_to_msec(const u64 jf)
-//{
-//     static const u64 factor = HZ / 1000;
-//     return (jf + factor/2) / factor;
-// }
-//
-// u64 jiffies_to_usec(const u64 jf)
-//{
-//     static const u64 factor = HZ / 1000000;
-//     return (jf + factor/2) / factor;
-// }

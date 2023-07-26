@@ -1,9 +1,13 @@
 #define pr_fmt(fmt) "ambix.main: " fmt
-/*
- * main.c - Kernel module init cleanup and procfs handling routines
- *
- * INESC-ID 2023
- *
+/**
+ * @file    main.c
+ * @author  INESC-ID
+ * @date    26 jul 2023
+ * @version 2.1.0
+ * @brief  Kernel module init, cleanup and procfs handling routines. Intended for
+ * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
+ * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code implemented by miguel marques
+ * <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
 #define DEBUG

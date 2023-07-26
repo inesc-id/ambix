@@ -1,11 +1,12 @@
 /**
  * @file    placement.c
- * @author  Ilia Kuzmin <Ilia.Kuzmin@tecnico.ulisboa.pt>
- * @date    11 Jan 2022
- * @version 0.4
- * @brief  Page walker for finding page table entries' R/M bits. Intended for
- * the 5.6.3 Linux kernel. Adapted from the code provided by Reza Karimi
- * <r68karimi@gmail.com> Adapted from the code implemented by Miguel Marques
+ * @author  INESC-ID
+ * @date    26 jul 2023
+ * @version 2.1.0
+ * @brief  Page walker for finding page table entries' r/m bits. Intended for
+ * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
+ * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza karimi
+ * <r68karimi@gmail.com>, adapted from the code implemented by miguel marques
  * <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
@@ -83,8 +84,9 @@
 
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value
 // than NVRAM nodes' ids due to the memory policy set in client-placement.c
+// CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
 static const int DRAM_NODES[] = {0, 1};
-static const int NVRAM_NODES[] = {2}; // FIXME {2}
+static const int NVRAM_NODES[] = {2};
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
@@ -105,15 +107,18 @@ unsigned long last_addr_clear = 0;
 #include "IMPORT.M"
 #undef M
 
-// == typedef struct page * (*alloc_migration_target_t)(
-// ==         struct page * page,
-// ==         unsigned long private);
-// == alloc_migration_target_t g_alloc_migration_target;
-
 typedef struct addr_info {
   unsigned long addr;
   size_t pid_idx;
 } addr_info_t;
+
+struct ambix_proc_t {
+  struct pid *__pid;
+  unsigned long start_addr;
+  unsigned long end_addr;
+  unsigned long allocation_site;
+  unsigned long size;
+};
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 5)
 /**
@@ -148,7 +153,6 @@ HELPER FUNCTIONS
 -------------------------------------------------------------------------------
 */
 
-// TODO: rewrite me
 int contains(int value, int mode) {
   const int *array;
   int size, i;
@@ -176,15 +180,6 @@ BIND/UNBIND FUNCTIONS
 -------------------------------------------------------------------------------
 */
 
-struct ambix_proc_t {
-  struct pid *__pid;
-  unsigned long start_addr;
-  unsigned long end_addr;
-  unsigned long allocation_site;
-  unsigned long size;
-};
-
-// static struct pid *PIDs[MAX_PIDS];
 static struct ambix_proc_t PIDs[MAX_PIDS];
 size_t PIDs_size = 0;
 
@@ -558,7 +553,6 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
 
   int i;
   unsigned long left = last_addr;
-  // TODO changed this, not sure?
   unsigned long right = PIDs[lst_pid_idx].end_addr;
 
   pr_debug("Page walk. Mode:%s; n:%d/%d; last_pid:%d(%d); last_addr:%lx.\n",
@@ -640,8 +634,6 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode) {
     return -1;
   }
 
-  // pr_debug("Memory walk {mode:%d; n:%d; last_pid_idx:%d; last_addr:%p;}\n",
-  //         mode, n, *last_pid_idx, (void *) *last_addr);
   *last_pid_idx = do_page_walk(pte_handler, ctx, *last_pid_idx, *last_addr);
   pr_debug("Memory walk complete. found:%d; backed-up:%d; last_pid:%d(%d) "
            "last_addr:%lx;\n",
@@ -680,7 +672,6 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
     }
     ctx->curr_pid_idx = i;
     spin_lock(&t->mm->page_table_lock);
-    // TODO segmentar isto
     do {
       pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr, last_addr_clear);  
       prev_last_addr = last_addr_clear;
@@ -794,14 +785,6 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n) {
   return 0;
 }
 
-/*
--------------------------------------------------------------------------------
-
-MESSAGE/REQUEST PROCESSING
-
--------------------------------------------------------------------------------
-*/
-
 // returns 0 if success, negative value otherwise
 int find_candidate_pages(struct pte_callback_context_t *ctx, u32 n_pages,
                          int mode) {
@@ -819,7 +802,6 @@ int find_candidate_pages(struct pte_callback_context_t *ctx, u32 n_pages,
     pr_info("Unrecognized mode.\n");
     return -1;
   }
-  // ctx->found_addrs[ctx->n_found++].pid_idx = ret;
 }
 
 enum pool_t { DRAM_POOL, NVRAM_POOL };
@@ -891,28 +873,6 @@ static u64 get_memory_total(enum pool_t pool) {
   return totalram * PAGE_SIZE;
 }
 
-// static u64 get_node_total_pages(const int node)
-//{
-//     struct sysinfo inf;
-//     g_si_meminfo_node(&inf, node);
-//     return inf.totalram;
-// }
-
-// static u32 get_memory_free_pages(enum pool_t pool)
-//{
-//     int i = 0;
-//     u64 freeram = 0;
-//     const int * nodes = get_pool_nodes(pool);
-//     size_t size = get_pool_size(pool);
-//     if (IS_ERR(nodes) || size == 0) return 0;
-//     for (i = 0; i < size; ++i) {
-//         struct sysinfo inf;
-//         g_si_meminfo_node(&inf, nodes[i]);
-//         freeram += inf.freeram;
-//     }
-//     return freeram / PAGE_SIZE;
-// }
-
 int g_switch_act = 1;
 int g_thresh_act = 1;
 
@@ -962,14 +922,6 @@ int ambix_check_memory(void) {
 
         n_bytes = (DRAM_USAGE_LIMIT - get_memory_usage(DRAM_POOL)) *
                   get_memory_total(DRAM_POOL) / USAGE_FACTOR;
-
-        // pr_debug("n_bytes:%lld, DRAM_USAGE_LIMIT: %lld; DRAM_USAGE: %lld;
-        // total:%lld; FACTOR:%lld\n",
-        //         n_bytes,
-        //         DRAM_USAGE_LIMIT,
-        //         get_memory_usage(DRAM_POOL),
-        //         get_memory_total(DRAM_POOL),
-        //         USAGE_FACTOR);
 
         n_pages = min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND);
 
@@ -1192,13 +1144,11 @@ static int do_migration(const addr_info_t *const found_addrs,
                         const size_t n_found, const enum pool_t dst) {
   LIST_HEAD(pagelist);
   size_t i;
-  // size_t n_nodes = get_pool_size(dst);
   const int *node_list = get_pool_nodes(dst);
   int node = node_list[0]; // FIXME: we need to pick nodes dynamically, relaying
                            // on space availability
   int err = 0;
 
-  // for (i = 0; i < n_nodes; ++i) {
   if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
     pr_err("Invalid node %d", node);
     return 0;
