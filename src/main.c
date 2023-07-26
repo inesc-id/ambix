@@ -1,4 +1,11 @@
 #define pr_fmt(fmt) "ambix.main: " fmt
+/*
+ * main.c - Kernel module init cleanup and procfs handling routines
+ *
+ * INESC-ID 2023
+ *
+ */
+
 #define DEBUG
 
 #include <linux/compiler.h>
@@ -6,7 +13,6 @@
 #include <linux/jiffies.h>
 #include <linux/kallsyms.h>
 #include <linux/kernel.h> /* Needed for KERN_INFO */
-//#include <linux/kstrtox.h>
 #include <linux/mm.h>
 #include <linux/module.h> /* Needed by all modules */
 #include <linux/pid.h>
@@ -22,10 +28,12 @@
 #include "placement.h"
 #include "tsc.h"
 
+#define PROC_NAME "ambix"
+
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Ilia Kuzmin");
-MODULE_DESCRIPTION("Bandwidth-aware page replacement; Ambix successor");
-MODULE_VERSION("0.10");
+MODULE_AUTHOR("INESC-ID");
+MODULE_DESCRIPTION("Ambix - Bandwidth-aware page replacement");
+MODULE_VERSION("2.1.0");
 
 static bool g_show_aggregates = true;
 static bool g_perf_enabled = true;
@@ -35,7 +43,6 @@ static bool g_perf_enabled = true;
  *
  */
 static int kmod_show(struct seq_file *s, void *private) {
-  // pr_debug("Show\n");
   if (g_show_aggregates) {
     const u64 pmm_reads = perf_counters_pmm_reads(),
               pmm_writes = perf_counters_pmm_writes(),
@@ -70,9 +77,6 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   char *buf = NULL;
   ssize_t rc = count;
 
-  //    if (count > LED_MAX_LENGTH)
-  //        count = LED_MAX_LENGTH;
-  //
   pr_info("proc_write from %u\n", current->pid);
   buf = memdup_user_nul(buffer, count);
   if (IS_ERR(buf))
@@ -81,11 +85,6 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
   /* work around \n when echo'ing into proc */
   if (buf[count - 1] == '\n')
     buf[count - 1] = '\0';
-
-  ///* before we change anything we want to stop any running timers,
-  // * otherwise calls such as on will have no persistent effect
-  // */
-  // del_timer_sync(&led_blink_timer);
 
   if (!strncmp(buf, "bind_range ", 11)) {
     unsigned long start, end, allocation_site, size;
@@ -108,7 +107,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     unsigned long start, end, allocation_site, size;
     retval = sscanf(buf, "bind_range_pid %d %lx %lx %lx %lx", &pid, &start,
                     &end, &allocation_site, &size);
-    pr_info("retval = %d pid = %d start = %li end = %li", retval, pid,
+    pr_debug("retval = %d pid = %d start = %li end = %li", retval, pid,
             *(long *)&start, *(long *)&end);
     if (retval != 5) {
       pr_crit("Couldn't parse bind_range_pid arguments pid=%d start=%lu "
@@ -198,7 +197,6 @@ void work_queue_cleanup(void) {
 
 // ---------------------------------------------------------------------------------
 
-#define PROC_NAME "ambix"
 int init_module(void) {
   struct proc_dir_entry *entry;
   int rc;

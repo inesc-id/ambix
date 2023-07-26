@@ -84,3 +84,5 @@ dkms.conf
 
 vm/ubuntu.iso
 .vscode/settings.json
+
+**/chord.make
