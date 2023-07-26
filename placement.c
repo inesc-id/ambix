@@ -5,9 +5,9 @@
  * @version 2.1.0
  * @brief  Page walker for finding page table entries' r/m bits. Intended for
  * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
- * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza karimi
- * <r68karimi@gmail.com>, adapted from the code implemented by miguel marques
- * <miguel.soares.marques@tecnico.ulisboa.pt>
+ * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza
+ * karimi <r68karimi@gmail.com>, adapted from the code implemented by miguel
+ * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
 #define DEBUG
@@ -85,7 +85,7 @@
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value
 // than NVRAM nodes' ids due to the memory policy set in client-placement.c
 // CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
-static const int DRAM_NODES[] = {0, 1};
+static const int DRAM_NODES[] = {0};
 static const int NVRAM_NODES[] = {2};
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
@@ -99,7 +99,6 @@ int g_last_pid_nvram = 0;
 
 unsigned long long pages_walked = 0;
 unsigned long last_addr_clear = 0;
-
 
 #define M(RET, NAME, SIGNATURE)                                                \
   typedef RET(*NAME##_t) SIGNATURE;                                            \
@@ -186,7 +185,9 @@ size_t PIDs_size = 0;
 static DEFINE_MUTEX(PIDs_mtx);
 
 int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
-                               unsigned long end_addr, unsigned long allocation_site, unsigned long size) {
+                               unsigned long end_addr,
+                               unsigned long allocation_site,
+                               unsigned long size) {
   struct pid *p = NULL;
   struct mutex *m = NULL;
   size_t i;
@@ -500,7 +501,7 @@ static int pte_callback_nvram_clear(pte_t *ptep, unsigned long addr,
 
   if (pages_walked > CLEAR_PTE_THRESHOLD) {
     last_addr_clear = addr;
-    return 1; 
+    return 1;
   }
   // If  page is not present, write protected, or page is not in NVRAM node
   if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
@@ -673,10 +674,12 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
     ctx->curr_pid_idx = i;
     spin_lock(&t->mm->page_table_lock);
     do {
-      pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr, last_addr_clear);  
+      pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr,
+              last_addr_clear);
       prev_last_addr = last_addr_clear;
       pages_walked = 0;
-      g_walk_page_range(t->mm, last_addr_clear, MAX_ADDRESS, &mem_walk_ops, ctx);
+      g_walk_page_range(t->mm, last_addr_clear, MAX_ADDRESS, &mem_walk_ops,
+                        ctx);
     } while (prev_last_addr != last_addr_clear);
     spin_unlock(&t->mm->page_table_lock);
     put_task_struct(t);
