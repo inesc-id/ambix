@@ -10,9 +10,11 @@
 ## Build and Run
 1. Disable Linux's default numa node balancing, swappiness and Transparent Huge Pages
 ```sh
+sudo su
 echo 0 > /proc/sys/kernel/numa_balancing
 sysctl vm.swappiness=0
 echo never > /sys/kernel/mm/transparent_hugepage/enabled
+exit
 ```
 2. Check the machine's topology using `numactl -H`
     - Note: The NVRAM numa node ID should always be higher than the rest of the IDs.
