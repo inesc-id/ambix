@@ -210,7 +210,9 @@ int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
   }
 
   for (i = 0; i < PIDs_size; ++i) {
-    if (PIDs[i].__pid == p) {
+    if (PIDs[i].__pid == p 
+        && PIDs[i].start_addr == start_addr 
+        && PIDs[i].end_addr == end_addr) {
       pr_info("Already managing given PID.\n");
       rc = -1;
       goto release_return;
@@ -251,6 +253,39 @@ int ambix_unbind_pid(const pid_t nr) {
 
   for (i = 0; i < PIDs_size; ++i) {
     if (pid_nr(PIDs[i].__pid) == nr) {
+      p = PIDs[i].__pid;
+      if (PIDs_size > 0) {
+        PIDs[i] = PIDs[--PIDs_size];
+      }
+      // as now there can be multiple entries for each pid (each with
+      // a different range), we iterate the whole list
+      // pr_info("Unbound pid=%d.\n", nr);
+      // goto release_return;
+    }
+  }
+
+release_return:
+  if (m)
+    mutex_unlock(m);
+  if (p)
+    put_pid(p);
+  return rc;
+}
+
+int ambix_unbind_range_pid(const pid_t nr, unsigned long start, unsigned long end) {
+  struct pid *p = NULL;
+  struct mutex *m = NULL;
+
+  size_t i;
+  int rc = 0;
+
+  mutex_lock(&PIDs_mtx);
+  m = &PIDs_mtx;
+
+  for (i = 0; i < PIDs_size; ++i) {
+    if (pid_nr(PIDs[i].__pid) == nr 
+        && start == PIDs[i].start_addr 
+        && end == PIDs[i].end_addr) {
       p = PIDs[i].__pid;
       if (PIDs_size > 0) {
         PIDs[i] = PIDs[--PIDs_size];

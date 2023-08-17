@@ -134,18 +134,42 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     if (ambix_unbind_pid(current->pid)) {
       rc = -EINVAL;
     }
-  } else if (!strncmp(buf, "bind ", 5)) {
+  } else if (!strncmp(buf, "unbind_range", 12)) {
+    unsigned long start, end;
+    int retval;
+    retval = sscanf(buf, "unbind_range %lx %lx", &start, &end);
+    if (retval != 2) {
+      pr_crit("Couldn't unbind in unbind_range");
+    }
+    if (ambix_unbind_range_pid(current->pid, start, end)) {
+      rc = -EINVAL;
+    }
+  } else if (!strncmp(buf, "unbind_range_pid", 12)) {
+    int pid, retval;
+    unsigned long start, end;
+    retval = sscanf(buf, "unbind_range_pid %d %lx %lx", &pid, &start, &end);
+    if (retval != 3) {
+      pr_crit("Couldn't unbind in unbind_range_pid");
+    }
+    if (ambix_unbind_range_pid(pid, start, end)) {
+      rc = -EINVAL;
+    }
+  } else if (!strncmp(buf, "bind_pid", 8)) {
     pid_t pid;
-    if (kstrtoint(buf + 5, 10, &pid)) {
-      pr_warn("Can't parse pid '%s'", buf + 5);
+    int retval;
+    retval = sscanf(buf, "bind_pid %d", &pid);
+    if (retval != 1) {
+      pr_warn("Can't parse pid '%s'", buf + 9);
       rc = -EINVAL;
     } else if (ambix_bind_pid(pid)) {
       rc = -EINVAL;
     }
-  } else if (!strncmp(buf, "unbind ", 7)) {
+  } else if (!strncmp(buf, "unbind_pid", 10)) {
     pid_t pid;
-    if (kstrtoint(buf + 7, 10, &pid)) {
-      pr_warn("Can't parse pid '%s'", buf + 7);
+    int retval;
+    retval = sscanf(buf, "unbind_pid %d", &pid);
+    if (retval != 1) {
+      pr_warn("Can't parse pid '%s'", buf + 11);
       rc = -EINVAL;
     } else if (ambix_unbind_pid(pid)) {
       rc = -EINVAL;

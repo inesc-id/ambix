@@ -4,7 +4,9 @@
 int bind_range(unsigned long start, unsigned long end, unsigned long allocation_site, unsigned long size);
 int bind_range_pid(int pid, unsigned long start, unsigned long end, unsigned long allocation_site, unsigned long size);
 int bind(void);
+int bind_proc_(void); // fortran
 int unbind(void);
+int unbind_(void); // fortran
 int bind_pid(int pid);
 int unbind_pid(int pid);
 int unbind_range(unsigned long start, unsigned long end);
