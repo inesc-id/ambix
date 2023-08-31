@@ -37,13 +37,26 @@ static const int NVRAM_NODES[] = {2};
 ```C
 // placement.c: lines 53-59
 // tune these parameters according to preference
-#define USAGE_FACTOR 100
-#define DRAM_USAGE_TARGET 95
-#define DRAM_USAGE_LIMIT 96
-#define NVRAM_USAGE_TARGET 95
-#define NVRAM_USAGE_LIMIT 98
 
-#define NVRAM_BW_THRESH 10
+// Ratio of real DRAM available to Ambix
+// e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4, this is set to 50
+#define DRAM_MEM_USAGE_RATIO 100
+// Ratio of real NVRAM available to Ambix
+// Analogous to DRAM_USAGE_RATIO
+#define NVRAM_MEM_USAGE_RATIO 100
+
+// All the 4 ratios below are relative to the amount of memory available to Ambix, depending on the two above parameters
+// optimal DRAM usage percentage (if usage is lower than this and NVRAM has candidate pages to be migrated, they are)
+#define DRAM_MEM_USAGE_TARGET_PERCENT 95
+// Ambix keeps DRAM usage always under this ratio
+#define DRAM_MEM_USAGE_LIMIT_PERCENT 96
+// If memory usage in NVRAM is below target and DRAM usage is above limit, pages will be migrated
+#define NVRAM_MEM_USAGE_TARGET_PERCENT 95
+// Used to switch pages between NVRAM and DRAM if usage in NVRAM is above limit and in DRAM below target
+#define NVRAM_MEM_USAGE_LIMIT_PERCENT 98
+
+// Used to check if NVRAM bandwidth is saturated
+#define NVRAM_BANDWIDTH_THRESHOLD 10
 ```
 4. Build the kernel module using GNU Make.
 ```sh
