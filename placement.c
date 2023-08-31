@@ -49,13 +49,26 @@
 #include "tsc.h"
 
 #define SEPARATOR 0xbad
-#define USAGE_FACTOR 100
-#define DRAM_USAGE_TARGET 95
-#define DRAM_USAGE_LIMIT 96
-#define NVRAM_USAGE_TARGET 95
-#define NVRAM_USAGE_LIMIT 98
 
-#define NVRAM_BW_THRESH 10
+// Ratio of real DRAM available to Ambix
+// e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4, this is set to 50
+#define DRAM_MEM_USAGE_RATIO 100
+// Ratio of real NVRAM available to Ambix
+// Analogous to DRAM_USAGE_RATIO
+#define NVRAM_MEM_USAGE_RATIO 100
+
+// All the 4 ratios below are relative to the amount of memory available to Ambix, depending on the two above parameters
+// optimal DRAM usage percentage (if usage is lower than this and NVRAM has candidate pages to be migrated, they are)
+#define DRAM_MEM_USAGE_TARGET_PERCENT 95
+// Ambix keeps DRAM usage always under this ratio
+#define DRAM_MEM_USAGE_LIMIT_PERCENT 96
+// If memory usage in NVRAM is below target and DRAM usage is above limit, pages will be migrated
+#define NVRAM_MEM_USAGE_TARGET_PERCENT 95
+// Used to switch pages between NVRAM and DRAM if usage in NVRAM is above limit and in DRAM below target
+#define NVRAM_MEM_USAGE_LIMIT_PERCENT 98
+
+// TODO rename this
+#define NVRAM_BANDWIDTH_THRESHOLD 10
 
 #define CLEAR_PTE_THRESHOLD 501752
 
@@ -264,7 +277,6 @@ int ambix_unbind_pid(const pid_t nr) {
     }
   }
 
-release_return:
   if (m)
     mutex_unlock(m);
   if (p)
@@ -843,6 +855,7 @@ int find_candidate_pages(struct pte_callback_context_t *ctx, u32 n_pages,
 
 enum pool_t { DRAM_POOL, NVRAM_POOL };
 
+// page count to KiB
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 static const int *get_pool_nodes(const enum pool_t pool) {
   switch (pool) {
@@ -879,11 +892,21 @@ static const char *get_pool_name(const enum pool_t pool) {
   }
 }
 
-static u32 get_memory_usage(enum pool_t pool) {
+// returns used memory for pool in KiB (times the usage factor)
+// K(totalram - freeram) / K(totalram) is between [0, 1]
+// by multiplying by USAGE_FACTOR we can decrease the ratio above
+// e.g. reduced DRAM from 8GiB to 4GiB, returns how many KiB of these 4GiB are being used
+static u32 get_memory_usage_percent(enum pool_t pool) {
   int i = 0;
   u64 totalram = 0, freeram = 0;
   const int *nodes = get_pool_nodes(pool);
   size_t size = get_pool_size(pool);
+  u32 ratio;
+  if (pool == DRAM_POOL) {
+    ratio = DRAM_MEM_USAGE_RATIO;
+  } else {
+    ratio = NVRAM_MEM_USAGE_RATIO;
+  }
   if (IS_ERR(nodes) || size == 0)
     return 0;
   for (i = 0; i < size; ++i) {
@@ -892,14 +915,22 @@ static u32 get_memory_usage(enum pool_t pool) {
     totalram += inf.totalram;
     freeram += inf.freeram;
   }
-  return K(totalram - freeram) * USAGE_FACTOR / K(totalram);
+
+  return K(totalram - freeram) * ratio / K(totalram);
 }
 
-static u64 get_memory_total(enum pool_t pool) {
+// number of bytes in total for pool (after being reduced with a certain ratio)
+static u64 get_memory_total_ratio(enum pool_t pool) {
   int i = 0;
   u64 totalram = 0;
   const int *nodes = get_pool_nodes(pool);
   const size_t size = get_pool_size(pool);
+  u64 ratio;
+  if (pool == DRAM_POOL) {
+    ratio = DRAM_MEM_USAGE_RATIO;
+  } else {
+    ratio = NVRAM_MEM_USAGE_RATIO;
+  }
   if (IS_ERR(nodes) || size == 0)
     return 0;
   for (i = 0; i < size; ++i) {
@@ -907,7 +938,8 @@ static u64 get_memory_total(enum pool_t pool) {
     g_si_meminfo_node(&inf, nodes[i]);
     totalram += inf.totalram;
   }
-  return totalram * PAGE_SIZE;
+
+  return totalram * PAGE_SIZE * ratio / 100;
 }
 
 int g_switch_act = 1;
@@ -926,8 +958,8 @@ int ambix_check_memory(void) {
   if (g_thresh_act || g_switch_act) {
     u32 dram_usage;
     u32 nvram_usage;
-    dram_usage = get_memory_usage(DRAM_POOL);
-    nvram_usage = get_memory_usage(NVRAM_POOL);
+    dram_usage = get_memory_usage_percent(DRAM_POOL);
+    nvram_usage = get_memory_usage_percent(NVRAM_POOL);
     pr_debug("Current DRAM Usage: %d\n", dram_usage);
     pr_debug("Current NVRAM Usage: %d\n", nvram_usage);
   }
@@ -947,18 +979,19 @@ int ambix_check_memory(void) {
     } else {
       pmm_bw = perf_counters_pmm_writes();
     }
-    pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw, NVRAM_BW_THRESH);
-    if (pmm_bw >= NVRAM_BW_THRESH) {
+    pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw, NVRAM_BANDWIDTH_THRESHOLD);
+    if (pmm_bw >= NVRAM_BANDWIDTH_THRESHOLD) {
       u64 tsc_start = tsc_rd(), clear_us, migrate_us;
       clear_nvram_ptes(ctx);
       clear_us = tsc_to_usec(tsc_rd() - tsc_start);
 
-      if (get_memory_usage(DRAM_POOL) < DRAM_USAGE_TARGET) {
+      if (get_memory_usage_percent(DRAM_POOL) < DRAM_MEM_USAGE_TARGET_PERCENT) {
         u64 n_bytes;
         u32 n_pages, num;
 
-        n_bytes = (DRAM_USAGE_LIMIT - get_memory_usage(DRAM_POOL)) *
-                  get_memory_total(DRAM_POOL) / USAGE_FACTOR;
+        // [DRAM_USAGE_LIMIT (%) - DRAM_USAGE_NODE (%)] * TOTAL_MEM_NODE (#bytes)
+        n_bytes = (DRAM_MEM_USAGE_LIMIT_PERCENT - get_memory_usage_percent(DRAM_POOL)) *
+                  get_memory_total_ratio(DRAM_POOL);
 
         n_pages = min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND);
 
@@ -984,14 +1017,14 @@ int ambix_check_memory(void) {
   }
   if (g_thresh_act) {
     pr_debug("Thresholds: DRAM limit %d of %d; NVRAM target %d of %d\n",
-             get_memory_usage(DRAM_POOL), DRAM_USAGE_LIMIT,
-             get_memory_usage(NVRAM_POOL), NVRAM_USAGE_TARGET);
-    if ((get_memory_usage(DRAM_POOL) > DRAM_USAGE_LIMIT) &&
-        (get_memory_usage(NVRAM_POOL) < NVRAM_USAGE_TARGET)) {
-      u64 n_bytes = min((get_memory_usage(DRAM_POOL) - DRAM_USAGE_TARGET) *
-                            get_memory_total(DRAM_POOL) / USAGE_FACTOR,
-                        (NVRAM_USAGE_TARGET - get_memory_usage(NVRAM_POOL)) *
-                            get_memory_total(NVRAM_POOL) / USAGE_FACTOR);
+             get_memory_usage_percent(DRAM_POOL), DRAM_MEM_USAGE_LIMIT_PERCENT,
+             get_memory_usage_percent(NVRAM_POOL), NVRAM_MEM_USAGE_TARGET_PERCENT);
+    if ((get_memory_usage_percent(DRAM_POOL) > DRAM_MEM_USAGE_LIMIT_PERCENT) &&
+        (get_memory_usage_percent(NVRAM_POOL) < NVRAM_MEM_USAGE_TARGET_PERCENT)) {
+      u64 n_bytes = min((get_memory_usage_percent(DRAM_POOL) - DRAM_MEM_USAGE_TARGET_PERCENT) *
+                            get_memory_total_ratio(DRAM_POOL),
+                        (NVRAM_MEM_USAGE_TARGET_PERCENT - get_memory_usage_percent(NVRAM_POOL)) *
+                            get_memory_total_ratio(NVRAM_POOL));
       u32 n_pages = min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND);
       u64 const tsc_start = tsc_rd();
       u32 num = kmod_migrate_pages(ctx, n_pages, DRAM_MODE);
@@ -1001,12 +1034,12 @@ int ambix_check_memory(void) {
               " (%lldus)\n",
               num, n_pages, migrate_us);
     } else if (!g_switch_act &&
-               (get_memory_usage(NVRAM_POOL) > NVRAM_USAGE_LIMIT) &&
-               (get_memory_usage(DRAM_POOL) < DRAM_USAGE_TARGET)) {
-      s64 n_bytes = min((get_memory_usage(NVRAM_POOL) - NVRAM_USAGE_TARGET) *
-                            get_memory_total(NVRAM_POOL) / USAGE_FACTOR,
-                        (DRAM_USAGE_TARGET - get_memory_usage(DRAM_POOL)) *
-                            get_memory_total(DRAM_POOL) / USAGE_FACTOR);
+               (get_memory_usage_percent(NVRAM_POOL) > NVRAM_MEM_USAGE_LIMIT_PERCENT) &&
+               (get_memory_usage_percent(DRAM_POOL) < DRAM_MEM_USAGE_TARGET_PERCENT)) {
+      s64 n_bytes = min((get_memory_usage_percent(NVRAM_POOL) - NVRAM_MEM_USAGE_TARGET_PERCENT) *
+                            get_memory_total_ratio(NVRAM_POOL),
+                        (DRAM_MEM_USAGE_TARGET_PERCENT - get_memory_usage_percent(DRAM_POOL)) *
+                            get_memory_total_ratio(DRAM_POOL));
       u32 n_pages = n_bytes / PAGE_SIZE;
       u64 const tsc_start = tsc_rd();
       u32 num = kmod_migrate_pages(ctx, n_pages, NVRAM_MODE);
