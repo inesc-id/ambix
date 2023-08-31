@@ -2,7 +2,7 @@
  * @file    placement.c
  * @author  INESC-ID
  * @date    26 jul 2023
- * @version 2.1.0
+ * @version 2.1.1
  * @brief  Page walker for finding page table entries' r/m bits. Intended for
  * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
  * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza

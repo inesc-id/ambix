@@ -29,24 +29,14 @@ exit
 
    In the following examples, we assume that the chosen nodes are 0 (DRAM node with cores/"cpus") and 2 (NVRAM "cpu-less" node).
 
-**perf_counters.c**
+**config.h**
 ```C
-// perf_counters.c: lines 17 and 18
-// CHANGE DEPENDING ON HARDWARE CONFIGURATION
-static u32 CPUs[] = {0}; // We only read events from the CPU in numa node 0
-```
-**placement.c**
-```C
-// placement.c: lines 88 and 89
 // CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
-static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {2};
-```
-**placement.c (optional)**
-```C
-// placement.c: lines 53-59
-// tune these parameters according to preference
+#define _CPUs {0} // According to 2.
+#define _DRAM_NODES {0} // According to 2.
+#define _NVRAM_NODES {2} // According to 2.
 
+// tune these parameters according to preference
 // Ratio of real DRAM available to Ambix.
 // e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4GiB, this parameter should be set to 50
 #define DRAM_MEM_USAGE_RATIO 100
