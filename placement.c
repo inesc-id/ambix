@@ -47,29 +47,9 @@
 #include "perf_counters.h"
 #include "placement.h"
 #include "tsc.h"
+#include "config.h"
 
 #define SEPARATOR 0xbad
-
-// Ratio of real DRAM available to Ambix
-// e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4, this is set to 50
-#define DRAM_MEM_USAGE_RATIO 100
-// Ratio of real NVRAM available to Ambix
-// Analogous to DRAM_USAGE_RATIO
-#define NVRAM_MEM_USAGE_RATIO 100
-
-// All the 4 ratios below are relative to the amount of memory available to Ambix, depending on the two above parameters
-// optimal DRAM usage percentage (if usage is lower than this and NVRAM has candidate pages to be migrated, they are)
-#define DRAM_MEM_USAGE_TARGET_PERCENT 95
-// Ambix keeps DRAM usage always under this ratio
-#define DRAM_MEM_USAGE_LIMIT_PERCENT 96
-// If memory usage in NVRAM is below target and DRAM usage is above limit, pages will be migrated
-#define NVRAM_MEM_USAGE_TARGET_PERCENT 95
-// Used to switch pages between NVRAM and DRAM if usage in NVRAM is above limit and in DRAM below target
-#define NVRAM_MEM_USAGE_LIMIT_PERCENT 98
-
-// TODO rename this
-#define NVRAM_BANDWIDTH_THRESHOLD 10
-
 #define CLEAR_PTE_THRESHOLD 501752
 
 #define MAX_N_FIND 131071U
@@ -97,8 +77,8 @@
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value
 // than NVRAM nodes' ids due to the memory policy set in client-placement.c
 // CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
-static const int DRAM_NODES[] = {0};
-static const int NVRAM_NODES[] = {2};
+static const int DRAM_NODES[] = _DRAM_NODES;
+static const int NVRAM_NODES[] = _NVRAM_NODES;
 
 static const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 static const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
@@ -916,7 +896,9 @@ static u32 get_memory_usage_percent(enum pool_t pool) {
     freeram += inf.freeram;
   }
 
-  return K(totalram - freeram) * ratio / K(totalram);
+
+  // integer division so we need to scale the values so the quotient != 0
+  return (K(totalram - freeram) * 100 / K(totalram)) * 100 / ratio;
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)

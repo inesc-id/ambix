@@ -23,7 +23,7 @@ exit
    - One node with one or more cores ("cpus"). This node will hold DRAM (the top memory tier) and the associated cores ("cpus") will run the threads of the application.
    - One "cpu-less" node. This node will hold the second memory tier, typically non-volatile RAM (NVRAM).
    
-   Typically, the first node will have a lower id than the second node; and both nodes should reside in the same socket.   
+   The first node must have a lower id than the second node; and both nodes should reside in the same socket.
    
 4. Change the following files according to the previous choice.
 
@@ -58,7 +58,7 @@ static const int NVRAM_NODES[] = {2};
 //The "_PERCENTAGE" parameters are relative to the amount of memory available to Ambix at each node
 
 // Target DRAM usage: if DRAM usage is lower than this and NVRAM has candidate pages, Ambix will
-// try to migrate them to DRAM until the target DRAM usage is reached
+// try to migrate them to DRAM until the limit DRAM usage is reached
 #define DRAM_MEM_USAGE_TARGET_PERCENT 95
 
 // DRAM usage limit (must be higher than target DRAM usage): when DRAM usage exceeds this limit,

@@ -12,9 +12,10 @@
 #include <linux/perf_event.h>
 
 #include "perf_counters.h"
+#include "config.h"
 
 // CHANGE DEPENDING ON HARDWARE CONFIGURATION
-static u32 CPUs[] = {0}; // We only read events from the CPU in numa node 0
+static u32 CPUs[] = _CPUs; // We only read events from the CPU in numa node 0
 static size_t CPUs_size = ARRAY_SIZE(CPUs);
 
 static u32 IMCs[] = {13, 14, 15, 16, 17, 18};

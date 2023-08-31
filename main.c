@@ -25,6 +25,7 @@
 #include <linux/timer.h>
 #include <linux/workqueue.h>
 
+#include "config.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 #include "placement.h"
@@ -258,6 +259,7 @@ int init(void) {
   int rc;
 
   pr_info("Initialization\n");
+  pr_info("DRAM_MEM_USAGE_RATIO = %d\n", DRAM_MEM_USAGE_RATIO);
 
   tsc_init();
 
