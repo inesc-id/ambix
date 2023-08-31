@@ -16,9 +16,15 @@ sysctl vm.swappiness=0
 echo never > /sys/kernel/mm/transparent_hugepage/enabled
 exit
 ```
-2. Check the machine's topology using `numactl -H`
-    - Note: The NVRAM numa node ID should always be higher than the rest of the IDs.
-3. Change the following files according to the result of step above
+2. Check the machine's node topology using `numactl -H`.
+   You should choose a pair of nodes to be used by the application(s) that will be managed by Ambix:
+   one node with one or more cores ("cpus") and one "cpu-less" node.
+   The former node holds DRAM (the top memory tier) and the associated cores ("cpus") will run the threads of the application.
+   The latter node holds the second memory tier, typically non-volatile RAM (NVRAM).
+   Typically, the first node will have a lower id than the second node; and both nodes should reside in the same socket.   
+   
+3. Change the following files according to the previous choice.
+   In the following examples, we assume that the chosen nodes are 0 (DRAM node with cores/"cpus") and 2 (NVRAM "cpu-less" node).
 
 **perf_counters.c**
 ```C
@@ -38,24 +44,36 @@ static const int NVRAM_NODES[] = {2};
 // placement.c: lines 53-59
 // tune these parameters according to preference
 
-// Ratio of real DRAM available to Ambix
-// e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4, this is set to 50
+// Ratio of real DRAM available to Ambix.
+// e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see 4GiB, this parameter should be set to 50
 #define DRAM_MEM_USAGE_RATIO 100
 // Ratio of real NVRAM available to Ambix
 // Analogous to DRAM_USAGE_RATIO
 #define NVRAM_MEM_USAGE_RATIO 100
 
-// All the 4 ratios below are relative to the amount of memory available to Ambix, depending on the two above parameters
-// optimal DRAM usage percentage (if usage is lower than this and NVRAM has candidate pages to be migrated, they are)
+//The following parameters are used to control when Ambix should initiate page migration between memory tiers
+//All are specified as ratios, relative to the amount of memory available to Ambix at each node
+
+// Target DRAM usage: if DRAM usage is lower than this and NVRAM has candidate pages, Ambix will
+// try to migrate them to DRAM until the target DRAM usage is reached
 #define DRAM_MEM_USAGE_TARGET_PERCENT 95
-// Ambix keeps DRAM usage always under this ratio
+
+// DRAM usage limit (must be higher than target DRAM usage): when DRAM usage exceeds this limit,
+// Ambix will try to evict cold pages from DRAM to NVRAM until the target DRAM usage is reached
+// (note: these downstream migrations are only performed as long as NVRAM usage is below the target NVRAM usage).
 #define DRAM_MEM_USAGE_LIMIT_PERCENT 96
-// If memory usage in NVRAM is below target and DRAM usage is above limit, pages will be migrated
+
+// Target NVRAM usage: parameter that restricts the eviction of DRAM pages (see description of DRAM usage limit)
+// and the promotion of NVRAM pages when NVRAM usage is above its limit (see next)
 #define NVRAM_MEM_USAGE_TARGET_PERCENT 95
-// Used to switch pages between NVRAM and DRAM if usage in NVRAM is above limit and in DRAM below target
+
+// NVRAM usage limit (must be higher than target NVRAM usage): if NVRAM usage is above this limit and DRAM usage is below its target, Ambix will promote enough
+// candidate pages until the target NVRAM usage is reached
 #define NVRAM_MEM_USAGE_LIMIT_PERCENT 98
 
-// Used to check if NVRAM bandwidth is saturated
+// NVRAM bandwidth usage threshold: when Ambix observes that NVRAM bandwidth usage is above this threshold,
+// it will try to select candidate hot pages from NVRAM (that are likely to contribute to the high NVRAM bandwidth usage)
+// and promote them
 #define NVRAM_BANDWIDTH_THRESHOLD 10
 ```
 4. Build the kernel module using GNU Make.
