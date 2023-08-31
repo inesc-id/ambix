@@ -1,6 +1,7 @@
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
+// CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
 #define _CPUs {0}
 #define _DRAM_NODES {0}
 #define _NVRAM_NODES {2}
