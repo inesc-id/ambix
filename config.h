@@ -40,5 +40,6 @@
 #define NVRAM_BANDWIDTH_THRESHOLD 10
 
 // Log migrated pages into the kernel ring buffer
-#define DEBUG_MIGRATIONS 1
+// Uncomment to print migrated pages
+// #define DEBUG_MIGRATIONS
 #endif
