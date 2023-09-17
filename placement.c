@@ -43,11 +43,11 @@
 #include <linux/pagewalk.h>
 #include <linux/string.h>
 
+#include "config.h"
 #include "find_kallsyms_lookup_name.h"
 #include "perf_counters.h"
 #include "placement.h"
 #include "tsc.h"
-#include "config.h"
 
 #define SEPARATOR 0xbad
 #define CLEAR_PTE_THRESHOLD 501752
@@ -74,6 +74,8 @@
 #define SWITCH_MODE 3
 #define NVRAM_WRITE_MODE 5
 
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+
 // Node definition: DRAM nodes' (memory mode) ids must always be a lower value
 // than NVRAM nodes' ids due to the memory policy set in client-placement.c
 // CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
@@ -88,6 +90,9 @@ unsigned long g_last_addr_nvram = 0;
 
 int g_last_pid_dram = 0;
 int g_last_pid_nvram = 0;
+
+unsigned long long dram_usage = 0;
+unsigned long long nvram_usage = 0;
 
 unsigned long long pages_walked = 0;
 unsigned long last_addr_clear = 0;
@@ -175,6 +180,7 @@ static struct ambix_proc_t PIDs[MAX_PIDS];
 size_t PIDs_size = 0;
 
 static DEFINE_MUTEX(PIDs_mtx);
+static DEFINE_MUTEX(USAGE_mtx);
 
 int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
                                unsigned long end_addr,
@@ -203,9 +209,8 @@ int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
   }
 
   for (i = 0; i < PIDs_size; ++i) {
-    if (PIDs[i].__pid == p 
-        && PIDs[i].start_addr == start_addr 
-        && PIDs[i].end_addr == end_addr) {
+    if (PIDs[i].__pid == p && PIDs[i].start_addr == start_addr &&
+        PIDs[i].end_addr == end_addr) {
       pr_info("Already managing given PID.\n");
       rc = -1;
       goto release_return;
@@ -264,7 +269,8 @@ int ambix_unbind_pid(const pid_t nr) {
   return rc;
 }
 
-int ambix_unbind_range_pid(const pid_t nr, unsigned long start, unsigned long end) {
+int ambix_unbind_range_pid(const pid_t nr, unsigned long start,
+                           unsigned long end) {
   struct pid *p = NULL;
   struct mutex *m = NULL;
 
@@ -275,9 +281,8 @@ int ambix_unbind_range_pid(const pid_t nr, unsigned long start, unsigned long en
   m = &PIDs_mtx;
 
   for (i = 0; i < PIDs_size; ++i) {
-    if (pid_nr(PIDs[i].__pid) == nr 
-        && start == PIDs[i].start_addr 
-        && end == PIDs[i].end_addr) {
+    if (pid_nr(PIDs[i].__pid) == nr && start == PIDs[i].start_addr &&
+        end == PIDs[i].end_addr) {
       p = PIDs[i].__pid;
       if (PIDs_size > 0) {
         PIDs[i] = PIDs[--PIDs_size];
@@ -328,12 +333,51 @@ struct pte_callback_context_t {
   addr_info_t switch_backup_addrs[MAX_N_SWITCH]; // for switch walk
 } static g_context = {0};
 
+static int pte_callback_usage(pte_t *ptep, unsigned long addr,
+                              unsigned long next, struct mm_walk *walk) {
+
+  if (pte_present(*ptep) && contains(pfn_to_nid(pte_pfn(*ptep)), DRAM_MODE)) {
+    dram_usage += 4; // 4KiB per page, should change to a variable in the future
+  } else if (pte_present(*ptep) &&
+             contains(pfn_to_nid(pte_pfn(*ptep)), NVRAM_MODE)) {
+    nvram_usage += 4;
+  }
+
+  return 0;
+}
+
+static void walk_ranges_usage(void) {
+  struct task_struct *t = NULL;
+  struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_usage};
+  int i;
+  pr_info("Walking page ranges to get memory usage");
+
+  dram_usage = 0;
+  nvram_usage = 0;
+
+  mutex_lock(&USAGE_mtx);
+  for (i = 0; i < PIDs_size; i++) {
+    t = get_pid_task(PIDs[i].__pid, PIDTYPE_PID);
+    if (!t) {
+      pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
+      continue;
+    }
+    spin_lock(&t->mm->page_table_lock);
+    g_walk_page_range(t->mm, PIDs[i].start_addr, PIDs[i].end_addr,
+                      &mem_walk_ops, NULL);
+    spin_unlock(&t->mm->page_table_lock);
+    put_task_struct(t);
+  }
+  mutex_unlock(&USAGE_mtx);
+}
+
 static int pte_callback_dram(pte_t *ptep, unsigned long addr,
                              unsigned long next, struct mm_walk *walk) {
   struct pte_callback_context_t *ctx =
       (struct pte_callback_context_t *)walk->private;
 
   pte_t old_pte;
+
   // If found all, save last addr
   if (ctx->n_found == ctx->n_to_find) {
     pr_debug("Dram callback: found enough pages, storing last addr %lx\n",
@@ -836,7 +880,6 @@ int find_candidate_pages(struct pte_callback_context_t *ctx, u32 n_pages,
 enum pool_t { DRAM_POOL, NVRAM_POOL };
 
 // page count to KiB
-#define K(x) ((x) << (PAGE_SHIFT - 10))
 static const int *get_pool_nodes(const enum pool_t pool) {
   switch (pool) {
   case DRAM_POOL:
@@ -872,6 +915,7 @@ static const char *get_pool_name(const enum pool_t pool) {
   }
 }
 
+
 // returns used memory for pool in KiB (times the usage factor)
 // K(totalram - freeram) / K(totalram) is between [0, 1]
 // by multiplying by USAGE_FACTOR we can decrease the ratio above
@@ -895,7 +939,6 @@ static u32 get_memory_usage_percent(enum pool_t pool) {
     totalram += inf.totalram;
     freeram += inf.freeram;
   }
-
 
   // integer division so we need to scale the values so the quotient != 0
   return (K(totalram - freeram) * 100 / K(totalram)) * 100 / ratio;
@@ -937,6 +980,10 @@ int ambix_check_memory(void) {
 
   pr_debug("Memory migration routine\n");
 
+  walk_ranges_usage();
+
+  pr_info("dram_usage = %llu nvram_usage = %llu", dram_usage, nvram_usage);
+
   if (g_thresh_act || g_switch_act) {
     u32 dram_usage;
     u32 nvram_usage;
@@ -961,7 +1008,8 @@ int ambix_check_memory(void) {
     } else {
       pmm_bw = perf_counters_pmm_writes();
     }
-    pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw, NVRAM_BANDWIDTH_THRESHOLD);
+    pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw,
+             NVRAM_BANDWIDTH_THRESHOLD);
     if (pmm_bw >= NVRAM_BANDWIDTH_THRESHOLD) {
       u64 tsc_start = tsc_rd(), clear_us, migrate_us;
       clear_nvram_ptes(ctx);
@@ -971,8 +1019,10 @@ int ambix_check_memory(void) {
         u64 n_bytes;
         u32 n_pages, num;
 
-        // [DRAM_USAGE_LIMIT (%) - DRAM_USAGE_NODE (%)] * TOTAL_MEM_NODE (#bytes)
-        n_bytes = (DRAM_MEM_USAGE_LIMIT_PERCENT - get_memory_usage_percent(DRAM_POOL)) *
+        // [DRAM_USAGE_LIMIT (%) - DRAM_USAGE_NODE (%)] * TOTAL_MEM_NODE
+        // (#bytes)
+        n_bytes = (DRAM_MEM_USAGE_LIMIT_PERCENT -
+                   get_memory_usage_percent(DRAM_POOL)) *
                   get_memory_total_ratio(DRAM_POOL);
 
         n_pages = min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND);
@@ -1000,12 +1050,16 @@ int ambix_check_memory(void) {
   if (g_thresh_act) {
     pr_debug("Thresholds: DRAM limit %d of %d; NVRAM target %d of %d\n",
              get_memory_usage_percent(DRAM_POOL), DRAM_MEM_USAGE_LIMIT_PERCENT,
-             get_memory_usage_percent(NVRAM_POOL), NVRAM_MEM_USAGE_TARGET_PERCENT);
+             get_memory_usage_percent(NVRAM_POOL),
+             NVRAM_MEM_USAGE_TARGET_PERCENT);
     if ((get_memory_usage_percent(DRAM_POOL) > DRAM_MEM_USAGE_LIMIT_PERCENT) &&
-        (get_memory_usage_percent(NVRAM_POOL) < NVRAM_MEM_USAGE_TARGET_PERCENT)) {
-      u64 n_bytes = min((get_memory_usage_percent(DRAM_POOL) - DRAM_MEM_USAGE_TARGET_PERCENT) *
+        (get_memory_usage_percent(NVRAM_POOL) <
+         NVRAM_MEM_USAGE_TARGET_PERCENT)) {
+      u64 n_bytes = min((get_memory_usage_percent(DRAM_POOL) -
+                         DRAM_MEM_USAGE_TARGET_PERCENT) *
                             get_memory_total_ratio(DRAM_POOL),
-                        (NVRAM_MEM_USAGE_TARGET_PERCENT - get_memory_usage_percent(NVRAM_POOL)) *
+                        (NVRAM_MEM_USAGE_TARGET_PERCENT -
+                         get_memory_usage_percent(NVRAM_POOL)) *
                             get_memory_total_ratio(NVRAM_POOL));
       u32 n_pages = min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND);
       u64 const tsc_start = tsc_rd();
@@ -1016,11 +1070,15 @@ int ambix_check_memory(void) {
               " (%lldus)\n",
               num, n_pages, migrate_us);
     } else if (!g_switch_act &&
-               (get_memory_usage_percent(NVRAM_POOL) > NVRAM_MEM_USAGE_LIMIT_PERCENT) &&
-               (get_memory_usage_percent(DRAM_POOL) < DRAM_MEM_USAGE_TARGET_PERCENT)) {
-      s64 n_bytes = min((get_memory_usage_percent(NVRAM_POOL) - NVRAM_MEM_USAGE_TARGET_PERCENT) *
+               (get_memory_usage_percent(NVRAM_POOL) >
+                NVRAM_MEM_USAGE_LIMIT_PERCENT) &&
+               (get_memory_usage_percent(DRAM_POOL) <
+                DRAM_MEM_USAGE_TARGET_PERCENT)) {
+      s64 n_bytes = min((get_memory_usage_percent(NVRAM_POOL) -
+                         NVRAM_MEM_USAGE_TARGET_PERCENT) *
                             get_memory_total_ratio(NVRAM_POOL),
-                        (DRAM_MEM_USAGE_TARGET_PERCENT - get_memory_usage_percent(DRAM_POOL)) *
+                        (DRAM_MEM_USAGE_TARGET_PERCENT -
+                         get_memory_usage_percent(DRAM_POOL)) *
                             get_memory_total_ratio(DRAM_POOL));
       u32 n_pages = n_bytes / PAGE_SIZE;
       u64 const tsc_start = tsc_rd();
@@ -1180,7 +1238,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
                         NR_ISOLATED_ANON + page_is_file_lru(head),
                         thp_nr_pages(head));
 #ifdef DEBUG_MIGRATIONS
-    pr_info("{\"page\": \"0x%lx\", \"origin\": %d, \"destination\": %d}", addr, page_to_nid(page), node);
+    pr_info("{\"page\": \"0x%lx\", \"origin\": %d, \"destination\": %d}", addr,
+            page_to_nid(page), node);
 #endif
   }
 out_putpage:
