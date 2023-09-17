@@ -38,4 +38,7 @@
 // it will try to select candidate hot pages from NVRAM (that are likely to contribute to the high NVRAM bandwidth usage)
 // and promote them
 #define NVRAM_BANDWIDTH_THRESHOLD 10
+
+// Log migrated pages into the kernel ring buffer
+#define DEBUG_MIGRATIONS 1
 #endif
