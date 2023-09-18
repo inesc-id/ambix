@@ -635,6 +635,7 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
   // lst_pid_idx)
   for (i = lst_pid_idx; i != lst_pid_idx + PIDs_size + 1; ++i) {
     int idx = i % PIDs_size;
+    int next_idx = (idx + 1) % PIDs_size;
     struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
     if (!t) {
       continue;
@@ -657,7 +658,10 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
       return idx;
     }
 
-    left = 0;
+    // TODO check this (MIGRATING UNBOUND PAGES)
+    // PIDs[idx].start_addr
+
+    left = PIDs[next_idx].start_addr;
 
     if ((i + 1) % PIDs_size == lst_pid_idx) { // second run through lst_pid_idx
       if (!last_addr) {
