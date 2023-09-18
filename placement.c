@@ -941,11 +941,22 @@ static u32 get_memory_usage_percent(enum pool_t pool) {
     struct sysinfo inf;
     g_si_meminfo_node(&inf, nodes[i]);
     totalram += inf.totalram;
-    freeram += inf.freeram;
+    // freeram += inf.freeram;
   }
 
+  mutex_lock(&USAGE_mtx);
+  if (pool == DRAM_POOL) {
+    freeram = K(totalram) - dram_usage;
+  } else {
+    freeram = K(totalram) - nvram_usage;
+  }
+  mutex_unlock(&USAGE_mtx);
+
+  // pr_info("K(totalram) - freeram = %llu", (K(totalram) - freeram));
+  // pr_info("((K(totalram) - freeram) * 100 / K(totalram)) = %llu", ((K(totalram) - freeram) * 100 / K(totalram)));
+
   // integer division so we need to scale the values so the quotient != 0
-  return (K(totalram - freeram) * 100 / K(totalram)) * 100 / ratio;
+  return ((K(totalram) - freeram) * 100 / K(totalram)) * 100 / ratio;
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)
@@ -984,19 +995,6 @@ int ambix_check_memory(void) {
 
   pr_debug("Memory migration routine\n");
 
-  walk_ranges_usage();
-
-  pr_info("dram_usage = %llu nvram_usage = %llu", dram_usage, nvram_usage);
-
-  if (g_thresh_act || g_switch_act) {
-    u32 dram_usage;
-    u32 nvram_usage;
-    dram_usage = get_memory_usage_percent(DRAM_POOL);
-    nvram_usage = get_memory_usage_percent(NVRAM_POOL);
-    pr_debug("Current DRAM Usage: %d\n", dram_usage);
-    pr_debug("Current NVRAM Usage: %d\n", nvram_usage);
-  }
-
   mutex_lock(&PIDs_mtx);
   refresh_pids();
   if (PIDs_size == 0) {
@@ -1004,6 +1002,11 @@ int ambix_check_memory(void) {
     goto release_return_acm;
   }
 
+  walk_ranges_usage();
+  // pr_info("dram_usage = %llu nvram_usage = %llu", dram_usage, nvram_usage);
+  // pr_info("dram_usage_percentage = %u nvram_usage_percentage = %u", get_memory_usage_percent(DRAM_POOL), get_memory_usage_percent(NVRAM_POOL));
+  pr_info("Current DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
+  pr_info("Current NVRAM Usage: %d\n", get_memory_usage_percent(NVRAM_POOL));
   if (g_switch_act) {
     u64 pmm_bw = 0;
 
