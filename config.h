@@ -42,4 +42,8 @@
 // Log migrated pages into the kernel ring buffer
 // Uncomment to print migrated pages
 // #define DEBUG_MIGRATIONS
+
+// TODO DOCUMENT
+#define AMBIX_DRAM_HARD_LIMIT 95
+#define AMBIX_NVRAM_HARD_LIMIT 95
 #endif
