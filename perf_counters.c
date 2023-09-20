@@ -72,7 +72,7 @@ int perf_counters_init(void) {
   event_attr.aux_output = 0;
 
   EVENTs_size = COUNTERs_size * IMCs_size * CPUs_size;
-  EVENTs = kmalloc(sizeof(EVENTs[0]) * EVENTs_size, GFP_KERNEL);
+  EVENTs = kmalloc(sizeof(struct perf_event *) * EVENTs_size, GFP_KERNEL);
   EVENTs_value = kmalloc(sizeof(EVENTs_value[0]) * EVENTs_size, GFP_KERNEL);
   EVENTs_time = kmalloc(sizeof(EVENTs_time[0]) * EVENTs_size, GFP_KERNEL);
   EVENTs_info = kmalloc(sizeof(struct counter_t *) * EVENTs_size, GFP_KERNEL);
@@ -239,5 +239,6 @@ void perf_counters_disable(void) {
   pr_debug("PCM disabled");
 }
 
-u64 jiffies_to_sec(const u64 jf) { return (jf + HZ / 2) / HZ; }
+// u64 jiffies_to_sec(const u64 jf) { return (jf + HZ / 2) / HZ; }
+u64 jiffies_to_sec(const u64 jf) { return jf / HZ; }
 
