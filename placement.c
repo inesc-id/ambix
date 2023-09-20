@@ -53,10 +53,7 @@
 #define CLEAR_PTE_THRESHOLD 501752
 
 #define MAX_N_FIND 131071U
-#define MAX_N_SWITCH                                                           \
-  (MAX_N_FIND - 1) /                                                           \
-      2 // Amount of switches that fit in exactly MAX_PACKETS netlink packets
-        // making space for begin and end struct
+#define MAX_N_SWITCH MAX_N_FIND
 #define PMM_MIXED 1
 
 #define MAX_PIDS                                                               \
