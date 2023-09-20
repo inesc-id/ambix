@@ -33,6 +33,7 @@
 #include <linux/swap.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/timekeeping.h>
 
 #include <linux/huge_mm.h>
 #include <linux/mempolicy.h>
@@ -1280,9 +1281,11 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
     mod_node_page_state(page_pgdat(head),
                         NR_ISOLATED_ANON + page_is_file_lru(head),
                         thp_nr_pages(head));
+
 #ifdef DEBUG_MIGRATIONS
-    pr_info("{\"page\": \"0x%lx\", \"origin\": %d, \"destination\": %d}", addr,
-            page_to_nid(page), node);
+    u64 ts = ktime_get_real_fast_ns();
+    pr_info("{\"page\": \"0x%lx\", \"origin\": %d, \"destination\": %d, \"ts\": %llu}", addr,
+            page_to_nid(page), node, ts);
 #endif
   }
 out_putpage:
