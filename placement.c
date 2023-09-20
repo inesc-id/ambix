@@ -1049,6 +1049,8 @@ int ambix_check_memory(void) {
     } else {
       pmm_bw = perf_counters_pmm_writes();
     }
+
+    pr_info("BANDWIDTH PMM = %lld", pmm_bw);
     pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw,
              NVRAM_BANDWIDTH_THRESHOLD);
     if (pmm_bw >= NVRAM_BANDWIDTH_THRESHOLD) {
