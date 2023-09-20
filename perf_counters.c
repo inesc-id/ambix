@@ -239,6 +239,6 @@ void perf_counters_disable(void) {
   pr_debug("PCM disabled");
 }
 
-// u64 jiffies_to_sec(const u64 jf) { return (jf + HZ / 2) / HZ; }
-u64 jiffies_to_sec(const u64 jf) { return jf / HZ; }
+u64 jiffies_to_sec(const u64 jf) { return (jf + HZ / 2) / HZ; }
+// u64 jiffies_to_sec(const u64 jf) { return jf / HZ; }
 
