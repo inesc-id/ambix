@@ -1285,9 +1285,7 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
                         thp_nr_pages(head));
 
 #ifdef DEBUG_MIGRATIONS
-    u64 ts = ktime_get_real_fast_ns();
-    pr_info("{\"page\": \"0x%lx\", \"origin\": %d, \"destination\": %d, \"ts\": %llu}", addr,
-            page_to_nid(page), node, ts);
+    pr_info("0x%lx,%d,%d,%llu", addr, page_to_nid(page), node, ktime_get_real_fast_ns());
 #endif
   }
 out_putpage:
