@@ -94,6 +94,7 @@ unsigned long long nvram_usage = 0;
 
 unsigned long long pages_walked = 0;
 unsigned long last_addr_clear = 0;
+int migration_type = 0;
 
 #define M(RET, NAME, SIGNATURE)                                                \
   typedef RET(*NAME##_t) SIGNATURE;                                            \
@@ -1180,6 +1181,7 @@ static u32 kmod_migrate_pages(struct pte_callback_context_t *ctx,
 
   nr = 0;
   tsc_start = tsc_rd();
+  migration_type = mode;
   switch (mode) {
   case DRAM_MODE:
     nr = do_migration(ctx->found_addrs, ctx->n_found, NVRAM_POOL);
@@ -1285,7 +1287,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
                         thp_nr_pages(head));
 
 #ifdef DEBUG_MIGRATIONS
-    pr_info("0x%lx,%d,%d,%llu", addr, page_to_nid(page), node, ktime_get_real_fast_ns());
+    unsigned long long ts = ktime_get_real_fast_ns();
+    pr_info("0x%lx,%d,%d,%d,%llu", addr, page_to_nid(page), node, migration_type, ts);
 #endif
   }
 out_putpage:
