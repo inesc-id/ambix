@@ -94,6 +94,9 @@ unsigned long long nvram_usage = 0;
 
 unsigned long long pages_walked = 0;
 unsigned long last_addr_clear = 0;
+unsigned long long total_migrations = 0;
+unsigned long long dram_migrations[5];
+unsigned long long nvram_migrations[5];
 int migration_type = 0;
 
 #define M(RET, NAME, SIGNATURE)                                                \
@@ -1025,9 +1028,30 @@ static u32 kmod_migrate_pages(struct pte_callback_context_t *, int n_pages,
 // MAIN ENTRY POINT
 int ambix_check_memory(void) {
   u32 n_migrated = 0;
+  int i = 0;
   struct pte_callback_context_t *ctx = &g_context;
 
   pr_debug("Memory migration routine\n");
+  pr_info("Migrated %llu since start", total_migrations);
+
+  unsigned long long ts = ktime_get_real_fast_ns();
+  pr_info("dram,%llu,%llu,%llu,%llu,%llu,%llu", dram_migrations[0],
+		  			   dram_migrations[1],
+					   dram_migrations[2],
+					   dram_migrations[3],
+					   dram_migrations[4],
+					   ts);
+
+  pr_info("nvram,%llu,%llu,%llu,%llu,%llu,%llu",nvram_migrations[0],
+		  			   nvram_migrations[1],
+					   nvram_migrations[2],
+					   nvram_migrations[3],
+					   nvram_migrations[4],
+					   ts);
+  for(i = 0; i < 5; i++) {
+	  dram_migrations[i] = 0;
+	  nvram_migrations[i] = 0;
+  }
 
   mutex_lock(&PIDs_mtx);
   refresh_pids();
@@ -1086,6 +1110,8 @@ int ambix_check_memory(void) {
         migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
 
         n_migrated += num;
+	total_migrations += num;
+	nvram_migrations[NVRAM_INTENSIVE_MODE] += num;
         pr_info("NVRAM->DRAM [B]: Migrated %d intensive pages out of %d."
                 " (%lldus cleanup; %lldus migration) \n",
                 num, n_pages, clear_us, migrate_us);
@@ -1093,8 +1119,12 @@ int ambix_check_memory(void) {
         u32 num;
         tsc_start = tsc_rd();
         num = kmod_migrate_pages(ctx, MAX_N_SWITCH, SWITCH_MODE);
+	nvram_migrations[SWITCH_MODE] += num;
+	dram_migrations[SWITCH_MODE] += num;
         migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
         n_migrated += num;
+	total_migrations += num;
+	total_migrations += num;
         pr_info("DRAM<->NVRAM [B]: Switched %d out of %d pages."
                 " (%lldus cleanup; %lldus migration)\n",
                 num, 2 * MAX_N_SWITCH, clear_us, migrate_us);
@@ -1125,8 +1155,10 @@ int ambix_check_memory(void) {
                         min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND));
       u64 const tsc_start = tsc_rd();
       u32 num = kmod_migrate_pages(ctx, n_pages, DRAM_MODE);
+      dram_migrations[DRAM_MODE] += num;
       u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
       n_migrated += num;
+      total_migrations += num;
       pr_info("DRAM->NVRAM [U]: Migrated %d out of %d pages."
               " (%lldus)\n",
               num, n_pages, migrate_us);
@@ -1150,8 +1182,10 @@ int ambix_check_memory(void) {
       u32 n_pages = min(n_bytes / PAGE_SIZE, n_bytes_sys / PAGE_SIZE);
       u64 const tsc_start = tsc_rd();
       u32 num = kmod_migrate_pages(ctx, n_pages, NVRAM_MODE);
+      nvram_migrations[NVRAM_MODE] += num;
       u64 const migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
       n_migrated += num;
+      total_migrations += num;
       pr_info("NVRAM->DRAM [U]: Migrated %d out of %d pages."
               " (%lldus)\n",
               num, n_pages, migrate_us);
@@ -1170,13 +1204,17 @@ static int do_switch(const addr_info_t found_addrs[], const size_t n_found) {
   u32 sep;
   for (sep = 0; sep < n_found && found_addrs[sep].pid_idx != SEPARATOR; ++sep)
     ;
+  pr_info("------------------size = %u n_found = %lu--------------------------", sep, n_found);
   if (sep == n_found) {
     pr_warn("Can't find separator");
     return 0;
   }
-  pr_debug("Switching: [0, %d], [%d, %ld]\n", sep, sep + 1, n_found);
-  return do_migration(found_addrs + sep + 1, n_found - sep - 1, NVRAM_POOL);
-  +do_migration(found_addrs, sep, DRAM_POOL);
+  pr_info("Switching: [0, %d], [%d, %ld]\n", sep, sep + 1, n_found);
+  int nvram_pool = do_migration(found_addrs + sep + 1, n_found - sep - 1, NVRAM_POOL);
+  pr_info("MIGRATING TO DRAM SWITCH #############");
+  int dram_pool = do_migration(found_addrs, sep, DRAM_POOL);
+  return nvram_pool + dram_pool;
+
 }
 
 /**
@@ -1284,6 +1322,12 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
     goto out_putpage;
   }
 
+#ifdef DEBUG_MIGRATIONS
+    unsigned long long ts = ktime_get_real_fast_ns();
+    pr_info("0x%lx,%d,%d,%d,%llu", addr, page_to_nid(page), node,
+            migration_type, ts);
+#endif
+
   err = -EACCES;
   if (PageHuge(page)) {
     if (PageHead(page)) {
@@ -1306,11 +1350,6 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
                         NR_ISOLATED_ANON + page_is_file_lru(head),
                         thp_nr_pages(head));
 
-#ifdef DEBUG_MIGRATIONS
-    unsigned long long ts = ktime_get_real_fast_ns();
-    pr_info("0x%lx,%d,%d,%d,%llu", addr, page_to_nid(page), node,
-            migration_type, ts);
-#endif
   }
 out_putpage:
   /*
