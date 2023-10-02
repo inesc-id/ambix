@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/timer.h>
+#include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 
 #include "config.h"
@@ -84,8 +85,9 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
                                size_t count, loff_t *ppos) {
   char *buf = NULL;
   ssize_t rc = count;
+  unsigned long long ts = ktime_get_real_fast_ns();
 
-  pr_info("proc_write from %u\n", current->pid);
+  pr_info("proc_write from %u @ %llu", current->pid, ts);
   buf = memdup_user_nul(buffer, count);
   if (IS_ERR(buf))
     return PTR_ERR(buf);
@@ -110,6 +112,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
       pr_crit("Couldn't bind in bind_range");
       rc = -EINVAL;
     }
+    pr_info("bind,%d,%llu", current->pid, ts);
   } else if (!strncmp(buf, "bind_range_pid", 14)) {
     int pid, retval;
     unsigned long start, end, allocation_site, size;
@@ -127,14 +130,17 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
       pr_crit("Couldn't bind in bind_range_pid");
       rc = -EINVAL;
     }
+    pr_info("bind,%d,%llu", current->pid, ts);
   } else if (!strcmp(buf, "bind")) {
     if (ambix_bind_pid(current->pid)) {
       rc = -EINVAL;
     }
+    pr_info("bind,%d,%llu", current->pid, ts);
   } else if (!strcmp(buf, "unbind")) {
     if (ambix_unbind_pid(current->pid)) {
       rc = -EINVAL;
     }
+    pr_info("unbind,%d,%llu", current->pid, ts);
   } else if (!strncmp(buf, "unbind_range", 12)) {
     unsigned long start, end;
     int retval;
@@ -145,6 +151,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     if (ambix_unbind_range_pid(current->pid, start, end)) {
       rc = -EINVAL;
     }
+    pr_info("unbind,%d,%llu", current->pid, ts);
   } else if (!strncmp(buf, "unbind_range_pid", 12)) {
     int pid, retval;
     unsigned long start, end;
@@ -155,6 +162,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     if (ambix_unbind_range_pid(pid, start, end)) {
       rc = -EINVAL;
     }
+    pr_info("unbind,%d,%llu", current->pid, ts);
   } else if (!strncmp(buf, "bind_pid", 8)) {
     pid_t pid;
     int retval;
@@ -175,6 +183,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
     } else if (ambix_unbind_pid(pid)) {
       rc = -EINVAL;
     }
+    pr_info("unbind,%d,%llu", current->pid, ts);
   } else if (!strcmp(buf, "enable")) {
     perf_counters_enable();
   } else if (!strcmp(buf, "disable")) {
