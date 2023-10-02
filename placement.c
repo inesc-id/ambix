@@ -378,7 +378,7 @@ static int pte_callback_dram(pte_t *ptep, unsigned long addr,
   struct pte_callback_context_t *ctx =
       (struct pte_callback_context_t *)walk->private;
 
-  pte_t old_pte;
+  pte_t old_pte, new_pte;
 
   // If found all, save last addr
   if (ctx->n_found == ctx->n_to_find) {
@@ -407,10 +407,15 @@ static int pte_callback_dram(pte_t *ptep, unsigned long addr,
     ctx->backup_addrs[ctx->n_backup++].pid_idx = ctx->curr_pid_idx;
   }
 
+  // old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
+  // *ptep = pte_mkold(old_pte);   // unset modified bit
+  // *ptep = pte_mkclean(old_pte); // unset dirty bit
+  // ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+
   old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-  *ptep = pte_mkold(old_pte);   // unset modified bit
-  *ptep = pte_mkclean(old_pte); // unset dirty bit
-  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+  new_pte = pte_mkold(old_pte);   // unset modified bit
+  new_pte = pte_mkclean(new_pte); // unset dirty bit
+  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, new_pte);
   return 0;
 }
 
@@ -421,7 +426,7 @@ static int pte_callback_nvram_force(pte_t *ptep, unsigned long addr,
   struct pte_callback_context_t *ctx =
       (struct pte_callback_context_t *)walk->private;
 
-  pte_t old_pte;
+  pte_t old_pte, new_pte;
 
   // If found all save last addr
   if (ctx->n_found == ctx->n_to_find) {
@@ -448,10 +453,15 @@ static int pte_callback_nvram_force(pte_t *ptep, unsigned long addr,
     ctx->backup_addrs[ctx->n_backup++].pid_idx = ctx->curr_pid_idx;
   }
 
+  // old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
+  // *ptep = pte_mkold(old_pte);   // unset modified bit
+  // *ptep = pte_mkclean(old_pte); // unset dirty bit
+  // ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+
   old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-  *ptep = pte_mkold(old_pte);   // unset modified bit
-  *ptep = pte_mkclean(old_pte); // unset dirty bit
-  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+  new_pte = pte_mkold(old_pte);   // unset modified bit
+  new_pte = pte_mkclean(new_pte); // unset dirty bit
+  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, new_pte);
 
   return 0;
 }
@@ -568,7 +578,7 @@ static int pte_callback_nvram_switch(pte_t *ptep, unsigned long addr,
 
 static int pte_callback_nvram_clear(pte_t *ptep, unsigned long addr,
                                     unsigned long next, struct mm_walk *walk) {
-  pte_t old_pte;
+  pte_t old_pte, new_pte;
   pages_walked++;
 
   if (pages_walked > CLEAR_PTE_THRESHOLD) {
@@ -581,10 +591,15 @@ static int pte_callback_nvram_clear(pte_t *ptep, unsigned long addr,
     return 0;
   }
 
+  // old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
+  // *ptep = pte_mkold(old_pte);   // unset modified bit
+  // *ptep = pte_mkclean(old_pte); // unset dirty bit
+  // ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+
   old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-  *ptep = pte_mkold(old_pte);   // unset modified bit
-  *ptep = pte_mkclean(old_pte); // unset dirty bit
-  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, *ptep);
+  new_pte = pte_mkold(old_pte);   // unset modified bit
+  new_pte = pte_mkclean(new_pte); // unset dirty bit
+  ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, new_pte);
 
   return 0;
 }
