@@ -54,7 +54,7 @@
 #define CLEAR_PTE_THRESHOLD 501752
 
 #define MAX_N_FIND 131071U
-#define MAX_N_SWITCH (MAX_N_FIND / 2) - 1
+#define MAX_N_SWITCH (MAX_N_FIND - 1) / 2
 #define PMM_MIXED 1
 
 #define MAX_PIDS                                                               \
@@ -749,14 +749,17 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
     }
     ctx->curr_pid_idx = i;
     spin_lock(&t->mm->page_table_lock);
-    do {
-      pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr,
-              last_addr_clear);
-      prev_last_addr = last_addr_clear;
-      pages_walked = 0;
-      g_walk_page_range(t->mm, last_addr_clear, MAX_ADDRESS, &mem_walk_ops,
-                        ctx);
-    } while (prev_last_addr != last_addr_clear);
+    // do {
+    //   pr_info("prev_last_addr = %lu, last_addr_clear = %lu\n", prev_last_addr,
+    //           last_addr_clear);
+    //   prev_last_addr = last_addr_clear;
+    //   pages_walked = 0;
+    //   g_walk_page_range(t->mm, last_addr_clear, MAX_ADDRESS, &mem_walk_ops,
+    //                     ctx);
+    // } while (prev_last_addr != last_addr_clear);
+    //
+    g_walk_page_range(t->mm, 0, MAX_ADDRESS, &mem_walk_ops,
+                      ctx);
     spin_unlock(&t->mm->page_table_lock);
     put_task_struct(t);
   }
@@ -1210,11 +1213,7 @@ static int do_switch(const addr_info_t found_addrs[], const size_t n_found) {
     return 0;
   }
   pr_info("Switching: [0, %d], [%d, %ld]\n", sep, sep + 1, n_found);
-  int nvram_pool = do_migration(found_addrs + sep + 1, n_found - sep - 1, NVRAM_POOL);
-  pr_info("MIGRATING TO DRAM SWITCH #############");
-  int dram_pool = do_migration(found_addrs, sep, DRAM_POOL);
-  return nvram_pool + dram_pool;
-
+  return do_migration(found_addrs + sep + 1, n_found - sep - 1, NVRAM_POOL) + do_migration(found_addrs, sep, DRAM_POOL);
 }
 
 /**
