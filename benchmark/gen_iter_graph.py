@@ -10,6 +10,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     c_lines = None
     c2_lines = None
+    lines = None
     if args.ambix:
         with open(args.ambix) as f:
             c_lines = [el.strip() for el in f.readlines()]
@@ -30,7 +31,7 @@ if __name__ == "__main__":
     if args.ambix:
         plt.plot(
             x_axis,
-            lines,
+            c_lines,
             label="Ambix",
             linestyle="-",
             marker="o",
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     if args.hmalloc:
         plt.plot(
             x_axis,
-            c_lines,
+            c2_lines,
             label="Hmalloc",
             linestyle="-",
             marker="o",
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     if args.both:
         plt.plot(
             x_axis,
-            c2_lines,
+            lines,
             label="Ambix + Hmalloc",
             linestyle="-",
             marker="o",
