@@ -18,7 +18,6 @@ M(struct page *, follow_page, (
             unsigned long address,
             unsigned int foll_flags));
 M(int, isolate_lru_page, (struct page *page));
-M(bool, isolate_huge_page, (struct page *page, struct list_head *list));
 M(bool, vma_migratable, (struct vm_area_struct *vma));
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)

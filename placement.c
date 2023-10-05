@@ -356,6 +356,7 @@ static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 static void walk_ranges_usage(void) {
   struct task_struct *t = NULL;
   struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_usage};
+  struct mm_struct *mm;
   int i;
   pr_info("Walking page ranges to get memory usage");
 
@@ -369,10 +370,12 @@ static void walk_ranges_usage(void) {
       pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
       continue;
     }
-    spin_lock(&t->mm->page_table_lock);
-    g_walk_page_range(t->mm, PIDs[i].start_addr, PIDs[i].end_addr,
-                      &mem_walk_ops, NULL);
-    spin_unlock(&t->mm->page_table_lock);
+    mm = get_task_mm(t);
+    mmap_read_lock(mm);
+    g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr, &mem_walk_ops,
+                      NULL);
+    mmap_read_unlock(mm);
+    mmput(mm);
     put_task_struct(t);
   }
   mutex_unlock(&USAGE_mtx);
@@ -449,8 +452,7 @@ static int pte_callback_dram_switch(pte_t *ptep, unsigned long addr,
   if (!pte_young(*ptep)) {
     // Send to NVRAM
     ctx->switch_addrs_dram[ctx->switch_found_dram].addr = addr;
-    ctx->switch_addrs_dram[ctx->switch_found_dram].pid_idx =
-        ctx->curr_pid_idx;
+    ctx->switch_addrs_dram[ctx->switch_found_dram].pid_idx = ctx->curr_pid_idx;
 
     ctx->switch_found_dram += 1;
     return 0;
@@ -460,7 +462,8 @@ static int pte_callback_dram_switch(pte_t *ptep, unsigned long addr,
   if (!pte_dirty(*ptep) && (ctx->backup_switch_found_dram < ctx->n_to_find)) {
     // Add to backup list
     ctx->backup_switch_addrs_dram[ctx->backup_switch_found_dram].addr = addr;
-    ctx->backup_switch_addrs_dram[ctx->backup_switch_found_dram].pid_idx = ctx->curr_pid_idx;
+    ctx->backup_switch_addrs_dram[ctx->backup_switch_found_dram].pid_idx =
+        ctx->curr_pid_idx;
     ctx->backup_switch_found_dram += 1;
   }
 
@@ -700,6 +703,7 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
     int idx = i % PIDs_size;
     int next_idx = (idx + 1) % PIDs_size;
     struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
+    struct mm_struct *mm;
     if (!t) {
       continue;
     }
@@ -707,11 +711,14 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
     pr_debug("Walk iteration [%d] {pid:%d(%d); left:%lx; right: %lx}\n", i,
              pid_nr(PIDs[idx].__pid), idx, left, right);
 
-    if (t->mm != NULL) {
-      mmap_read_lock(t->mm);
+    mm = get_task_mm(t);
+    if (mm != NULL) {
+      mmap_read_lock(mm);
       ctx->curr_pid_idx = idx;
-      g_walk_page_range(t->mm, left, right, &mem_walk_ops, ctx);
-      mmap_read_unlock(t->mm);
+      g_walk_page_range(mm, left, right, &mem_walk_ops, ctx);
+      mmap_read_unlock(mm);
+      mmput(mm);
+      mm = NULL;
     }
     put_task_struct(t);
 
@@ -801,6 +808,7 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode) {
 static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
   struct task_struct *t = NULL;
   struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_nvram_clear};
+  struct mm_struct *mm;
   int i;
 
   pr_debug("Cleaning NVRAM PTEs");
@@ -812,9 +820,11 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
       continue;
     }
     ctx->curr_pid_idx = i;
-    spin_lock(&t->mm->page_table_lock);
-    g_walk_page_range(t->mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
-    spin_unlock(&t->mm->page_table_lock);
+    mm = get_task_mm(t);
+    mmap_write_lock(mm);
+    g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
+    mmap_write_unlock(mm);
+    mmput(mm);
     put_task_struct(t);
   }
   return 0;
@@ -859,7 +869,8 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n) {
 
   dram_found = ctx->switch_found_dram;
 
-  ctx->n_to_find = min(dram_found + ctx->backup_switch_found_dram, ctx->n_to_find);
+  ctx->n_to_find =
+      min(dram_found + ctx->backup_switch_found_dram, ctx->n_to_find);
 
   pr_info("Found %u pages in DRAM", dram_found);
   pr_info("Found %u backup pages in DRAM", ctx->backup_switch_found_dram);
@@ -1321,27 +1332,20 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 #endif
 
   err = -EACCES;
-  if (PageHuge(page)) {
-    if (PageHead(page)) {
-      g_isolate_huge_page(page, pagelist);
-      err = 1;
-    }
-  } else {
-    struct page *head;
+  struct page *head;
 
-    head = compound_head(page);
-    err = g_isolate_lru_page(head);
-    if (err) {
-      pr_debug("Failed to isolate page.\n");
-      goto out_putpage;
-    }
-
-    err = 1;
-    list_add_tail(&head->lru, pagelist);
-    mod_node_page_state(page_pgdat(head),
-                        NR_ISOLATED_ANON + page_is_file_lru(head),
-                        thp_nr_pages(head));
+  head = compound_head(page);
+  err = g_isolate_lru_page(head);
+  if (err) {
+    pr_debug("Failed to isolate page.\n");
+    goto out_putpage;
   }
+
+  err = 1;
+  list_add_tail(&head->lru, pagelist);
+  mod_node_page_state(page_pgdat(head),
+                      NR_ISOLATED_ANON + page_is_file_lru(head),
+                      thp_nr_pages(head));
 out_putpage:
   /*
    * Either remove the duplicate refcount from
