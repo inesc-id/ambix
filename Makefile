@@ -1,5 +1,5 @@
 obj-m += ambix.o
-ambix-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o tsc.o
+ambix-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o tsc.o pid_management.o memory_info.o migrate.o kernel_symbols.o
 
 KBUILD_CFLAGS += -fno-omit-frame-pointer
 CC = gcc
