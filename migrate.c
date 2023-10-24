@@ -1,13 +1,12 @@
 /**
- * @file    placement.c
+ * @file    migrate.c
  * @author  INESC-ID
- * @date    26 jul 2023
- * @version 2.1.1
- * @brief  Page walker for finding page table entries' r/m bits. Intended for
- * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
- * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza
- * karimi <r68karimi@gmail.com>, adapted from the code implemented by miguel
- * marques <miguel.soares.marques@tecnico.ulisboa.pt>
+ * @date    23 oct 2023
+ * @version 1.0.0
+ * @brief  Intended for the 5.10.0 linux kernel. Adapted from the code prov
+ * ided by ilia kuzmin <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the 
+ * code provided by reza karimi <r68karimi@gmail.com>, adapted from the code
+ * implemented by miguel marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
 #include <linux/version.h>
@@ -22,11 +21,11 @@
 #include <linux/sched/mm.h>
 #include <linux/atomic.h>
 #include <linux/list.h>
+
 #include "config.h"
 #include "kernel_symbols.h"
 #include "migrate.h"
 #include "pid_management.h"
-
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 5)
 /**
@@ -160,40 +159,65 @@ out:
 	return err;
 }
 
-int do_migration(const addr_info_t *const found_addrs, const size_t n_found,
-		 const enum pool_t dst)
+int do_migration(priority_queue *pds, const size_t n_to_migrate,
+		 const enum pool_t dst, int priority)
 {
 	LIST_HEAD(pagelist);
-	size_t i;
+	size_t pages_migrated = 0;
 	const int *node_list = get_pool_nodes(dst);
 	int node =
 		node_list[0]; // FIXME: we need to pick nodes dynamically, relaying
-		// on space availability
+	// on space availability
 	int err = 0;
+	unsigned long found_addr, addr;
+	size_t pid_idx, temp_idx = -1;
+	struct task_struct *t = NULL;
 
 	if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
 		pr_err("Invalid node %d", node);
 		return 0;
 	}
 
-	pr_debug("DO MIGRATION: %ld pages -> %s", n_found, get_pool_name(dst));
+	pr_debug("DO MIGRATION: %ld pages -> %s", n_to_migrate,
+		 get_pool_name(dst));
 	my_lru_cache_disable();
-	for (i = 0; i < n_found; ++i) {
-		unsigned long addr =
-			(unsigned long)untagged_addr(found_addrs[i].addr);
-		size_t idx = found_addrs[i].pid_idx;
-		struct task_struct *t =
-			get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
+
+	FREQ_ORDERED_TRAVERSE(pds, priority, found_addr, pid_idx)
+	{
+		if (pages_migrated >= n_to_migrate)
+			goto migrate;
+
+		addr = (unsigned long)untagged_addr(found_addr);
+
+		if (pid_idx != temp_idx && t) {
+			put_task_struct(t);
+			t = NULL;
+		}
+
+		if (!t) {
+			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
+			temp_idx = pid_idx;
+		}
+
 		if (!t) {
 			continue;
 		}
 
 		err = add_page_for_migration(t->mm, addr, node, &pagelist);
-		put_task_struct(t);
-		if (err > 0)
+
+		if (err > 0) {
+			pages_migrated++;
 			/*Page is successfully queued for migration*/
-			continue;
-		break;
+		} else {
+			goto migrate;
+		}
+	}
+
+migrate:
+
+	if (t) {
+		put_task_struct(t);
+		t = NULL;
 	}
 
 	if (list_empty(&pagelist)) {
@@ -207,13 +231,13 @@ int do_migration(const addr_info_t *const found_addrs, const size_t n_found,
 
 	if (err) {
 		pr_debug("migrate_pages has returned en error: %d\n", err);
-		err = i - err;
+		err = pages_migrated - err;
 		g_putback_movable_pages(&pagelist);
 		goto out;
 	}
 
-	pr_debug("Successfully migrated %ld\n", i);
-	err = i;
+	pr_debug("Successfully migrated %ld\n", pages_migrated);
+	err = pages_migrated;
 
 out:
 	my_lru_cache_enable();
