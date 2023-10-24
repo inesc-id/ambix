@@ -1,8 +1,8 @@
 /**
  * @file    pid_management.c
  * @author  INESC-ID
- * @date    
- * @version 
+ * @date    23 oct 2023
+ * @version 1.0.0
  * @brief  Adapted from the code provided by ilia kuzmin
  * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza
  * karimi <r68karimi@gmail.com>, adapted from the code implemented by miguel
