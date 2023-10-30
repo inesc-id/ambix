@@ -70,6 +70,7 @@ typedef int (*pte_entry_handler_t)(pte_t *, unsigned long addr,
 struct pte_callback_context_t {
 	u32 n_found;
 	u32 n_to_find;
+	u32 walk_iter;
 	unsigned long last_addr;
 	size_t curr_pid_idx;
 
@@ -108,10 +109,15 @@ static int fast_tier_scan_callback(pte_t *ptep, unsigned long addr,
 	enum access_freq_t access_freq;
 
 	ctx->last_addr = addr;
+	ctx->walk_iter++;
 
 	if (ctx->n_found == ctx->n_to_find) {
 		pr_debug("Dram callback: found enough pages, last addr %lx\n",
 			 addr);
+		return 1;
+	}
+
+	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -156,8 +162,13 @@ static int slow_tier_exhaustive_scan_callback(pte_t *ptep, unsigned long addr,
 	enum access_freq_t access_freq;
 
 	ctx->last_addr = addr;
+	ctx->walk_iter++;
 
 	if (ctx->n_found == ctx->n_to_find) {
+		return 1;
+	}
+
+	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -194,16 +205,20 @@ static int slow_tier_write_priority_callback(pte_t *ptep, unsigned long addr,
 		(struct pte_callback_context_t *)walk->private;
 
 	ctx->last_addr = addr;
+	ctx->walk_iter++;
+
+	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+		return 1;
+	}
+
+	if (ctx->n_found == ctx->n_to_find) {
+		return 1;
+	}
 
 	// If page is not present, write protected, or not in NVRAM node
 	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
 	    !is_page_in_pool(*ptep, NVRAM_POOL)) {
 		return 0;
-	}
-
-	// If found all save last addr
-	if (ctx->n_found == ctx->n_to_find) {
-		return 1;
 	}
 
 	if (pte_dirty(*ptep)) {
@@ -232,8 +247,13 @@ static int slow_tier_access_priority_callback(pte_t *ptep, unsigned long addr,
 		(struct pte_callback_context_t *)walk->private;
 
 	ctx->last_addr = addr;
+	ctx->walk_iter++;
 
 	if (ctx->n_found == ctx->n_to_find) {
+		return 1;
+	}
+
+	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -268,8 +288,13 @@ static int slow_tier_clear_pte_callback(pte_t *ptep, unsigned long addr,
 	pte_t old_pte, new_pte;
 
 	ctx->last_addr = addr;
+	ctx->walk_iter++;
 
-	if (ctx->n_found >= CLEAR_PTE_THRESHOLD) {
+	if (ctx->n_found == ctx->n_to_find) {
+		return 1;
+	}
+
+	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -311,15 +336,29 @@ static int do_page_walk(int idx, unsigned long start_addr,
 		return 0;
 	}
 
-	pr_info("Page Walk {pid[%d]:%d; left:%lx; right: %lx}\n", idx,
-		pid_nr(PIDs[idx].__pid), start_addr, end_addr);
+	do {
+		if (t->mm) {
+			pr_info("Page Walk {pid[%d]:%d; left:%lx; right: %lx}\n",
+				idx, pid_nr(PIDs[idx].__pid), start_addr,
+				end_addr);
 
-	if (t->mm) {
-		mmap_read_lock(t->mm);
-		g_walk_page_range(t->mm, start_addr, end_addr, &mem_walk_ops,
-				  ctx);
-		mmap_read_unlock(t->mm);
-	}
+			ctx->walk_iter = 0;
+
+			mmap_read_lock(t->mm);
+			g_walk_page_range(t->mm, start_addr, end_addr,
+					  &mem_walk_ops, ctx);
+			mmap_read_unlock(t->mm);
+		}
+
+		if (ctx->n_found >= ctx->n_to_find)
+			break;
+
+		if (start_addr == ctx->last_addr)
+			break;
+
+		start_addr = ctx->last_addr;
+	} while (ctx->last_addr < end_addr);
+
 	put_task_struct(t);
 
 	return 0;
@@ -383,7 +422,7 @@ static int do_fast_tier_page_walk(pte_entry_handler_t pte_handler,
 	g_last_dram_idx = last_addr.pid_idx;
 	g_last_dram_addr = last_addr.addr;
 
-	return max(ctx->n_found, address_count(&ctx->fast_tier_pages));
+	return address_count(&ctx->fast_tier_pages);
 }
 
 static int do_slow_tier_page_walk(pte_entry_handler_t pte_handler,
@@ -402,7 +441,7 @@ static int do_slow_tier_page_walk(pte_entry_handler_t pte_handler,
 	g_pte_clear_window_start_idx = last_addr.pid_idx;
 	g_pte_clear_window_start_addr = last_addr.addr;
 
-	return max(ctx->n_found, address_count(&ctx->slow_tier_pages));
+	return address_count(&ctx->slow_tier_pages);
 }
 
 static int clear_nvram_ptes(struct pte_callback_context_t *ctx)
@@ -413,7 +452,7 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx)
 	last_addr = walk_tasks_page_range(
 		g_pte_clear_window_end_idx, g_pte_clear_window_end_idx,
 		g_pte_clear_window_end_addr, g_pte_clear_window_start_addr,
-		slow_tier_clear_pte_callback, ctx, CLEAR_PTE_THRESHOLD);
+		slow_tier_clear_pte_callback, ctx, 4 * CLEAR_PTE_THRESHOLD);
 
 	g_pte_clear_window_start_idx = g_pte_clear_window_end_idx;
 	g_pte_clear_window_start_addr = g_pte_clear_window_end_addr;
@@ -433,7 +472,8 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 	switch (mode) {
 	case DEMOTE_PAGES:
 		pte_handler = fast_tier_scan_callback;
-		return do_fast_tier_page_walk(pte_handler, ctx);
+		return min(n, do_fast_tier_page_walk(pte_handler, ctx));
+
 		break;
 	case EVICT_FAST_TIER:
 		pte_handler = slow_tier_exhaustive_scan_callback;
@@ -449,7 +489,7 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 		return -1;
 	}
 
-	return do_slow_tier_page_walk(pte_handler, ctx);
+	return min(n, do_slow_tier_page_walk(pte_handler, ctx));
 }
 
 /**
@@ -461,7 +501,7 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n)
 		do_slow_tier_page_walk(slow_tier_access_priority_callback, ctx);
 	pr_info("Found %d/%d pages in NVRAM\n", hot_pages_found, n);
 
-	ctx->n_to_find = min(address_count(&ctx->slow_tier_pages), n);
+	ctx->n_to_find = min(hot_pages_found, n);
 
 	// ?Maybe skip the next page walk with numbers >0 but lower than const
 	if (ctx->n_to_find == 0) {
