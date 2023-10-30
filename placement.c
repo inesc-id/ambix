@@ -117,7 +117,7 @@ static int fast_tier_scan_callback(pte_t *ptep, unsigned long addr,
 		return 1;
 	}
 
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+	if (ctx->walk_iter == 2 * CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -168,7 +168,7 @@ static int slow_tier_exhaustive_scan_callback(pte_t *ptep, unsigned long addr,
 		return 1;
 	}
 
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+	if (ctx->walk_iter == 2 * CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -207,7 +207,7 @@ static int slow_tier_write_priority_callback(pte_t *ptep, unsigned long addr,
 	ctx->last_addr = addr;
 	ctx->walk_iter++;
 
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+	if (ctx->walk_iter == 2 * CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -253,7 +253,7 @@ static int slow_tier_access_priority_callback(pte_t *ptep, unsigned long addr,
 		return 1;
 	}
 
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+	if (ctx->walk_iter == 2 * CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -294,7 +294,7 @@ static int slow_tier_clear_pte_callback(pte_t *ptep, unsigned long addr,
 		return 1;
 	}
 
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
+	if (ctx->walk_iter == 2 * CLEAR_PTE_THRESHOLD) {
 		return 1;
 	}
 
@@ -368,8 +368,7 @@ static addr_info_t walk_tasks_page_range(int start_idx, int end_idx,
 					 unsigned long start_addr,
 					 unsigned long end_addr,
 					 pte_entry_handler_t pte_handler,
-					 struct pte_callback_context_t *ctx,
-					 unsigned int threshold)
+					 struct pte_callback_context_t *ctx)
 {
 	int idx = start_idx;
 	unsigned long left = start_addr;
@@ -385,7 +384,7 @@ static addr_info_t walk_tasks_page_range(int start_idx, int end_idx,
 	for (;;) {
 		do_page_walk(idx, left, right, pte_handler, ctx);
 
-		if (ctx->n_found >= threshold) {
+		if (ctx->n_found >= ctx->n_to_find) {
 			break;
 		}
 
@@ -417,7 +416,7 @@ static int do_fast_tier_page_walk(pte_entry_handler_t pte_handler,
 
 	last_addr = walk_tasks_page_range(g_last_dram_idx, g_last_dram_idx,
 					  g_last_dram_addr, g_last_dram_addr,
-					  pte_handler, ctx, ctx->n_to_find);
+					  pte_handler, ctx);
 
 	g_last_dram_idx = last_addr.pid_idx;
 	g_last_dram_addr = last_addr.addr;
@@ -436,7 +435,7 @@ static int do_slow_tier_page_walk(pte_entry_handler_t pte_handler,
 					  g_pte_clear_window_end_idx,
 					  g_pte_clear_window_start_addr,
 					  g_pte_clear_window_end_addr,
-					  pte_handler, ctx, ctx->n_to_find);
+					  pte_handler, ctx);
 
 	g_pte_clear_window_start_idx = last_addr.pid_idx;
 	g_pte_clear_window_start_addr = last_addr.addr;
@@ -448,11 +447,14 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx)
 {
 	addr_info_t last_addr;
 
+	ctx->n_to_find = 8 * CLEAR_PTE_THRESHOLD;
+
 	pr_info("Clearing NVRAM PTEs\n");
-	last_addr = walk_tasks_page_range(
-		g_pte_clear_window_end_idx, g_pte_clear_window_end_idx,
-		g_pte_clear_window_end_addr, g_pte_clear_window_start_addr,
-		slow_tier_clear_pte_callback, ctx, 4 * CLEAR_PTE_THRESHOLD);
+	last_addr = walk_tasks_page_range(g_pte_clear_window_end_idx,
+					  g_pte_clear_window_end_idx,
+					  g_pte_clear_window_end_addr,
+					  g_pte_clear_window_start_addr,
+					  slow_tier_clear_pte_callback, ctx);
 
 	g_pte_clear_window_start_idx = g_pte_clear_window_end_idx;
 	g_pte_clear_window_start_addr = g_pte_clear_window_end_addr;
@@ -499,9 +501,13 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n)
 {
 	int hot_pages_found =
 		do_slow_tier_page_walk(slow_tier_access_priority_callback, ctx);
-	pr_info("Found %d/%d pages in NVRAM\n", hot_pages_found, n);
+	pr_info("Found %d    %d    %d    %d/%d pages in NVRAM\n",
+		ctx->slow_tier_pages.index[HOT_PAGE],
+		ctx->slow_tier_pages.index[WARM_ACCESSED_PAGE],
+		ctx->slow_tier_pages.index[WARM_DIRTY_PAGE], hot_pages_found,
+		n);
 
-	ctx->n_to_find = min(hot_pages_found, n);
+	ctx->n_to_find = min((u32)hot_pages_found, n);
 
 	// ?Maybe skip the next page walk with numbers >0 but lower than const
 	if (ctx->n_to_find == 0) {
@@ -514,23 +520,40 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n)
 
 	int cold_pages_found =
 		do_fast_tier_page_walk(fast_tier_scan_callback, ctx);
-	pr_info("Found %d/%d pages in DRAM\n", cold_pages_found,
-		ctx->n_to_find);
+	pr_info("Found %d   %d    %d    %d/%d pages in DRAM\n",
+		ctx->fast_tier_pages.index[COLD_PAGE],
+		ctx->fast_tier_pages.index[WARM_DIRTY_PAGE],
+		ctx->fast_tier_pages.index[WARM_ACCESSED_PAGE],
+		cold_pages_found, ctx->n_to_find);
 
 	enum access_freq_t slow_tier_freq = HOT_PAGE;
 	enum access_freq_t fast_tier_freq = COLD_PAGE;
 
-	u32 warmer_pages = 0;
-	u32 colder_pages = 0;
+	u32 warmer_pages = ctx->slow_tier_pages.index[slow_tier_freq--];
+	u32 colder_pages = ctx->fast_tier_pages.index[fast_tier_freq++];
 
-	// TODO: This method of calculating the number of pages to switch is not correct, but it is reasonable for now
-	while (slow_tier_freq > fast_tier_freq) {
-		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq];
+
+	if (warmer_pages == colder_pages) {
 		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq];
-
-		slow_tier_freq--;
-		fast_tier_freq++;
+		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq];
+		return min(n, min(warmer_pages, colder_pages));
 	}
+
+	// TODO: This method of calculating the number of pages to switch is terible, but it is reasonable for now
+
+
+	if (warmer_pages > colder_pages) {
+		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq++];
+	} else if (warmer_pages < colder_pages) {
+		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq--];
+	} 
+
+
+	if (warmer_pages > colder_pages) {
+		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq];
+	} else if (warmer_pages < colder_pages) {
+		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq];
+	} 
 
 	return min(n, min(warmer_pages, colder_pages));
 }
@@ -604,9 +627,9 @@ static u32 kmod_migrate_pages(struct pte_callback_context_t *ctx,
 	case SWITCH_MODE:
 		pr_info("Switching: %d\n", rc);
 
-		nr = do_migration(&ctx->fast_tier_pages, nr_pages, NVRAM_POOL,
+		nr = do_migration(&ctx->fast_tier_pages, rc, NVRAM_POOL,
 				  COLDER_PAGES_FIRST) +
-		     do_migration(&ctx->slow_tier_pages, nr_pages, DRAM_POOL,
+		     do_migration(&ctx->slow_tier_pages, rc, DRAM_POOL,
 				  WARMER_PAGES_FIRST);
 
 		pr_debug("Switch of %d pages took %lldus", nr,
