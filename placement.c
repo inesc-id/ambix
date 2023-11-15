@@ -355,6 +355,7 @@ static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 
 static void walk_ranges_usage(void) {
   struct task_struct *t = NULL;
+  struct mm_struct *mm = NULL;
   struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_usage};
   int i;
   pr_info("Walking page ranges to get memory usage");
@@ -369,10 +370,22 @@ static void walk_ranges_usage(void) {
       pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
       continue;
     }
-    spin_lock(&t->mm->page_table_lock);
-    g_walk_page_range(t->mm, PIDs[i].start_addr, PIDs[i].end_addr,
+
+    mm = get_task_mm(t);
+
+    if (mm == NULL) {
+		  put_task_struct(t);
+		  continue;
+	  }
+
+    //spin_lock(&t->mm->page_table_lock);
+    mmap_read_lock(mm);
+    g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr,
                       &mem_walk_ops, NULL);
-    spin_unlock(&t->mm->page_table_lock);
+    //spin_unlock(&t->mm->page_table_lock);
+    mmap_read_unlock(mm);
+
+    mmput(mm);
     put_task_struct(t);
   }
   mutex_unlock(&USAGE_mtx);
@@ -688,6 +701,8 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
   int i;
   unsigned long left = last_addr;
   unsigned long right = PIDs[lst_pid_idx].end_addr;
+  struct task_struct *t = NULL;
+  struct mm_struct *mm = NULL;
 
   pr_debug("Page walk. Mode:%s; n:%d/%d; last_pid:%d(%d); last_addr:%lx.\n",
            print_mode(pte_handler), ctx->n_found, ctx->n_to_find,
@@ -699,20 +714,28 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
   for (i = lst_pid_idx; i != lst_pid_idx + PIDs_size + 1; ++i) {
     int idx = i % PIDs_size;
     int next_idx = (idx + 1) % PIDs_size;
-    struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
+    t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
     if (!t) {
       continue;
     }
 
+    mm = get_task_mm(t);
+
+    if (mm == NULL) {
+		  put_task_struct(t);
+      t = NULL;
+		  continue;
+	  }
+
     pr_debug("Walk iteration [%d] {pid:%d(%d); left:%lx; right: %lx}\n", i,
              pid_nr(PIDs[idx].__pid), idx, left, right);
 
-    if (t->mm != NULL) {
-      mmap_read_lock(t->mm);
-      ctx->curr_pid_idx = idx;
-      g_walk_page_range(t->mm, left, right, &mem_walk_ops, ctx);
-      mmap_read_unlock(t->mm);
-    }
+    mmap_read_lock(mm);
+    ctx->curr_pid_idx = idx;
+    g_walk_page_range(mm, left, right, &mem_walk_ops, ctx);
+    mmap_read_unlock(mm);
+    
+    mmput(mm);
     put_task_struct(t);
 
     // TODO: review this if
@@ -800,6 +823,7 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode) {
 
 static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
   struct task_struct *t = NULL;
+  struct mm_struct *mm = NULL;
   struct mm_walk_ops mem_walk_ops = {.pte_entry = pte_callback_nvram_clear};
   int i;
 
@@ -811,14 +835,28 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
       pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
       continue;
     }
+
+    mm = get_task_mm(t);
+
+    if (mm == NULL) {
+		  put_task_struct(t);
+		  continue;
+	  }
+
     ctx->curr_pid_idx = i;
-    spin_lock(&t->mm->page_table_lock);
-    g_walk_page_range(t->mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
-    spin_unlock(&t->mm->page_table_lock);
+    //spin_lock(&t->mm->page_table_lock);
+    mmap_read_lock(mm);
+    g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
+    //spin_unlock(&t->mm->page_table_lock);
+    mmap_read_unlock(mm);
+
+    mmput(mm);
     put_task_struct(t);
   }
   return 0;
 }
+
+
 
 // ----------------------------------------------------------------------------------
 
@@ -1354,61 +1392,109 @@ out:
   return err;
 }
 
-static int do_migration(const addr_info_t *const found_addrs,
-                        const size_t n_found, const enum pool_t dst) {
-  LIST_HEAD(pagelist);
-  size_t i;
-  const int *node_list = get_pool_nodes(dst);
-  int node = node_list[0]; // FIXME: we need to pick nodes dynamically, relaying
-                           // on space availability
-  int err = 0;
 
-  if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
-    pr_err("Invalid node %d", node);
-    return 0;
-  }
+int ambix_migrate_pages(struct list_head *pagelist, int node)
+{
+	int err;
 
-  pr_debug("DO MIGRATION: %ld pages -> %s", n_found, get_pool_name(dst));
-  my_lru_cache_disable();
-  for (i = 0; i < n_found; ++i) {
-    unsigned long addr = (unsigned long)untagged_addr(found_addrs[i].addr);
-    size_t idx = found_addrs[i].pid_idx;
-    struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
-    if (!t) {
-      continue;
-    }
+	err = g_migrate_pages(pagelist, alloc_dst_page, NULL,
+			      (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
 
-    err = add_page_for_migration(t->mm, addr, node, &pagelist);
-    put_task_struct(t);
-    if (err > 0)
-      /*Page is successfully queued for migration*/
-      continue;
-    break;
-  }
+	if (err) {
+		pr_debug("migrate_pages has returned en error: %d\n", err);
+		g_putback_movable_pages(pagelist);
+	}
 
-  if (list_empty(&pagelist)) {
-    pr_debug("Page list is empty!\n");
-    err = 0;
-    goto out;
-  }
+	return err;
+}
 
-  err = g_migrate_pages(&pagelist, alloc_dst_page, NULL, (unsigned long)node,
-                        MIGRATE_SYNC, MR_SYSCALL);
+int do_migration(const addr_info_t *const found_addrs,
+                        const size_t n_found, const enum pool_t dst)
+{
+	LIST_HEAD(pagelist);
+	size_t pages_migrated = 0;
+	const int *node_list = get_pool_nodes(dst);
+	int node =
+		node_list[0]; // FIXME: we need to pick nodes dynamically, relaying
+	// on space availability
+	int err = 0;
+	unsigned long found_addr, addr;
+	size_t pid_idx, temp_idx = -1;
+	struct task_struct *t = NULL;
+	struct mm_struct *mm = NULL;
+  int i;
 
-  if (err) {
-    pr_debug("migrate_pages has returned en error: %d\n", err);
-    err = i - err;
-    g_putback_movable_pages(&pagelist);
-    goto out;
-  }
+	if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
+		pr_err("Invalid node %d", node);
+		return 0;
+	}
 
-  pr_debug("Successfully migrated %ld\n", i);
-  err = i;
+	pr_debug("DO MIGRATION: %ld pages -> %s", n_found,
+		 get_pool_name(dst));
+
+	my_lru_cache_disable();
+
+	for (i = 0; i < n_found; ++i) {	
+		addr = (unsigned long)untagged_addr(found_addrs[i].addr);
+    pid_idx = found_addrs[i].pid_idx;
+
+		if (pid_idx != temp_idx && mm) {
+			if (!list_empty(&pagelist))
+				pages_migrated -=
+					ambix_migrate_pages(&pagelist, node);
+			mmput(mm);
+			put_task_struct(t);
+
+			mm = NULL;
+			t = NULL;
+		}
+
+		if (!mm) {
+			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
+
+			if (t == NULL) {
+				pr_warn("Migration: Can't resolve struct of task (%d).\n",
+					pid_nr(PIDs[pid_idx].__pid));
+				goto out;
+			}
+
+			mm = get_task_mm(t);
+
+			if (mm == NULL) {
+				pr_warn("Migration: Can't resolve mm_struct of task (%d).\n",
+					pid_nr(PIDs[pid_idx].__pid));
+				goto out;
+			}
+			temp_idx = pid_idx;
+		}
+
+		err = add_page_for_migration(mm, addr, node, &pagelist);
+
+		if (err > 0) {
+			pages_migrated++;
+			/*Page is successfully queued for migration*/
+		}
+	}
 
 out:
-  my_lru_cache_enable();
-  return err;
+	if (!list_empty(&pagelist))
+		pages_migrated -= ambix_migrate_pages(&pagelist, node);
+
+	pr_info("Successfully migrated %ld\n", pages_migrated);
+	err = pages_migrated;
+
+	if (mm) {
+		mmput(mm);
+	}
+
+	if (t) {
+		put_task_struct(t);
+	}
+
+	my_lru_cache_enable();
+	return err;
 }
+
 
 /*
 -------------------------------------------------------------------------------
