@@ -333,25 +333,22 @@ static int do_page_walk(int idx, unsigned long start_addr,
 
 	ctx->curr_pid_idx = idx;
 	t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
+
+	if (!t)
+		return 0;
+
 	mm = get_task_mm(t);
 
-	if (!t) {
+	if (!mm) {
+		put_task_struct(t);
 		return 0;
 	}
 
 	do {
-		if (mm) {
-			pr_info("Page Walk {pid[%d]:%d; left:%lx; right: %lx}\n",
-				idx, pid_nr(PIDs[idx].__pid), start_addr,
-				end_addr);
-
-			ctx->walk_iter = 0;
-
-			mmap_read_lock(mm);
-			g_walk_page_range(mm, start_addr, end_addr,
-					  &mem_walk_ops, ctx);
-			mmap_read_unlock(mm);
-		}
+		ctx->walk_iter = 0;
+		mmap_read_lock(mm);
+		g_walk_page_range(mm, start_addr, end_addr, &mem_walk_ops, ctx);
+		mmap_read_unlock(mm);
 
 		if (ctx->n_found >= ctx->n_to_find)
 			break;
