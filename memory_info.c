@@ -35,7 +35,6 @@ const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
 static unsigned long long dram_usage = 0;
 static unsigned long long nvram_usage = 0;
 
-
 int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 {
 	const int *nodes;
@@ -60,12 +59,10 @@ int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 			      unsigned long next, struct mm_walk *walk)
 {
-	if (pte_present(*ptep) &&
-	    is_page_in_pool(*ptep, DRAM_POOL)) {
+	if (pte_present(*ptep) && is_page_in_pool(*ptep, DRAM_POOL)) {
 		dram_usage +=
 			4; // 4KiB per page, should change to a variable in the future
-	} else if (pte_present(*ptep) &&
-		   is_page_in_pool(*ptep, NVRAM_POOL)) {
+	} else if (pte_present(*ptep) && is_page_in_pool(*ptep, NVRAM_POOL)) {
 		nvram_usage += 4;
 	}
 
@@ -76,6 +73,7 @@ void walk_ranges_usage(void)
 {
 	struct task_struct *t = NULL;
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_callback_usage };
+	struct mm_struct *mm = NULL;
 	int i;
 	pr_info("Walking page ranges to get memory usage");
 
@@ -90,11 +88,19 @@ void walk_ranges_usage(void)
 				pid_nr(PIDs[i].__pid));
 			continue;
 		}
-		spin_lock(&t->mm->page_table_lock);
-		g_walk_page_range(t->mm, PIDs[i].start_addr, PIDs[i].end_addr,
+		mm = get_task_mm(t);
+		if (!mm) {
+			pr_warn("Can't resolve mm_struct of task (%d)",
+				pid_nr(PIDs[i].__pid));
+			put_task_struct(t);
+			continue;
+		}
+		g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr,
 				  &mem_walk_ops, NULL);
-		spin_unlock(&t->mm->page_table_lock);
+		mmput(mm);
+		mm = NULL;
 		put_task_struct(t);
+		t = NULL;
 	}
 	mutex_unlock(&USAGE_mtx);
 }

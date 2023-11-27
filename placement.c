@@ -34,6 +34,7 @@
 #include <linux/timekeeping.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/sched/mm.h>
 
 #include <linux/mm_inline.h>
 #include <linux/mmzone.h> // Contains conversion between pfn and node id (NUMA node)
@@ -328,26 +329,28 @@ static int do_page_walk(int idx, unsigned long start_addr,
 {
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_handler };
 	struct task_struct *t;
+	struct mm_struct *mm;
 
 	ctx->curr_pid_idx = idx;
 	t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
+	mm = get_task_mm(t);
 
 	if (!t) {
 		return 0;
 	}
 
 	do {
-		if (t->mm) {
+		if (mm) {
 			pr_info("Page Walk {pid[%d]:%d; left:%lx; right: %lx}\n",
 				idx, pid_nr(PIDs[idx].__pid), start_addr,
 				end_addr);
 
 			ctx->walk_iter = 0;
 
-			mmap_read_lock(t->mm);
-			g_walk_page_range(t->mm, start_addr, end_addr,
+			mmap_read_lock(mm);
+			g_walk_page_range(mm, start_addr, end_addr,
 					  &mem_walk_ops, ctx);
-			mmap_read_unlock(t->mm);
+			mmap_read_unlock(mm);
 		}
 
 		if (ctx->n_found >= ctx->n_to_find)
@@ -359,6 +362,7 @@ static int do_page_walk(int idx, unsigned long start_addr,
 		start_addr = ctx->last_addr;
 	} while (ctx->last_addr < end_addr);
 
+	mmput(mm);
 	put_task_struct(t);
 
 	return 0;
@@ -532,7 +536,6 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n)
 	u32 warmer_pages = ctx->slow_tier_pages.index[slow_tier_freq--];
 	u32 colder_pages = ctx->fast_tier_pages.index[fast_tier_freq++];
 
-
 	if (warmer_pages == colder_pages) {
 		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq];
 		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq];
@@ -541,19 +544,17 @@ int switch_walk(struct pte_callback_context_t *ctx, u32 n)
 
 	// TODO: This method of calculating the number of pages to switch is terible, but it is reasonable for now
 
-
 	if (warmer_pages > colder_pages) {
 		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq++];
 	} else if (warmer_pages < colder_pages) {
 		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq--];
-	} 
-
+	}
 
 	if (warmer_pages > colder_pages) {
 		colder_pages += ctx->fast_tier_pages.index[fast_tier_freq];
 	} else if (warmer_pages < colder_pages) {
 		warmer_pages += ctx->slow_tier_pages.index[slow_tier_freq];
-	} 
+	}
 
 	return min(n, min(warmer_pages, colder_pages));
 }

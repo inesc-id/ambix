@@ -3,11 +3,17 @@
 
 // CHANGE THIS ACCORDING TO HARDWARE CONFIGURATION
 #define _CPUs                                                                  \
-  { 0 }
+	{                                                                      \
+		0                                                              \
+	}
 #define _DRAM_NODES                                                            \
-  { 0 }
+	{                                                                      \
+		0                                                              \
+	}
 #define _NVRAM_NODES                                                           \
-  { 2 }
+	{                                                                      \
+		2                                                              \
+	}
 // tune these parameters according to preference
 
 // Ratio of real DRAM available to Ambix.
