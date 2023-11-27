@@ -95,8 +95,11 @@ void walk_ranges_usage(void)
 			put_task_struct(t);
 			continue;
 		}
+		mmap_read_lock(mm);
 		g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr,
 				  &mem_walk_ops, NULL);
+		mmap_read_unlock(mm);
+		
 		mmput(mm);
 		mm = NULL;
 		put_task_struct(t);
