@@ -159,6 +159,21 @@ out:
 	return err;
 }
 
+int kernel_migrate_pages(struct list_head *pagelist, int node)
+{
+	int err;
+
+	err = g_migrate_pages(pagelist, alloc_dst_page, NULL,
+			      (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
+
+	if (err) {
+		pr_debug("migrate_pages has returned en error: %d\n", err);
+		g_putback_movable_pages(pagelist);
+	}
+
+	return err;
+}
+
 int do_migration(priority_queue *pds, const size_t n_to_migrate,
 		 const enum pool_t dst, int priority)
 {
@@ -173,6 +188,7 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 	size_t pid_idx, temp_idx = -1;
 	struct task_struct *t = NULL;
 	struct mm_struct *mm = NULL;
+	nodemask_t task_nodes;
 
 	if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
 		pr_err("Invalid node %d", node);
@@ -181,30 +197,25 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 
 	pr_debug("DO MIGRATION: %ld pages -> %s", n_to_migrate,
 		 get_pool_name(dst));
+
 	my_lru_cache_disable();
 
 	FREQ_ORDERED_TRAVERSE(pds, priority, found_addr, pid_idx)
-	{
-		if (pages_migrated >= n_to_migrate)
-			goto migrate;
+	{	
+		if (pages_migrated >= n_to_migrate) {
+			goto out;
+		}
 
 		addr = (unsigned long)untagged_addr(found_addr);
 
-		if (pid_idx != temp_idx && t) {
+		if (pid_idx != temp_idx && mm) {
+			if (!list_empty(&pagelist))
+				pages_migrated -=
+					kernel_migrate_pages(&pagelist, node);
 			mmput(mm);
 			put_task_struct(t);
 			mm = NULL;
 			t = NULL;
-		}
-
-		if (!t) {
-			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
-			mm = get_task_mm(t);
-			temp_idx = pid_idx;
-		}
-
-		if (!t) {
-			continue;
 		}
 
 		if (!mm) {
@@ -223,6 +234,7 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 					pid_nr(PIDs[pid_idx].__pid));
 				goto out;
 			}
+
 			temp_idx = pid_idx;
 		}
 
@@ -231,42 +243,24 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 		if (err > 0) {
 			pages_migrated++;
 			/*Page is successfully queued for migration*/
-		} else {
-			goto migrate;
 		}
 	}
-
-migrate:
-
-	if (t) {
-		if (mm) {
-			mmput(mm);
-			mm = NULL;
-		}
-		put_task_struct(t);
-		t = NULL;
-	}
-
-	if (list_empty(&pagelist)) {
-		pr_debug("Page list is empty!\n");
-		err = 0;
-		goto out;
-	}
-
-	err = g_migrate_pages(&pagelist, alloc_dst_page, NULL,
-			      (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
-
-	if (err) {
-		pr_debug("migrate_pages has returned en error: %d\n", err);
-		err = pages_migrated - err;
-		g_putback_movable_pages(&pagelist);
-		goto out;
-	}
-
-	pr_debug("Successfully migrated %ld\n", pages_migrated);
-	err = pages_migrated;
 
 out:
+	if (!list_empty(&pagelist))
+		pages_migrated -= kernel_migrate_pages(&pagelist, node);
+
+	pr_info("Successfully migrated %ld\n", pages_migrated);
+	err = pages_migrated;
+
+	if (mm) {
+		mmput(mm);
+	}
+
+	if (t) {
+		put_task_struct(t);
+	}
+
 	my_lru_cache_enable();
 	return err;
 }
