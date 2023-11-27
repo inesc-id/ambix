@@ -5,7 +5,6 @@
 
 enum pool_t { DRAM_POOL, NVRAM_POOL };
 
-
 extern const int DRAM_NODES[];
 extern const int NVRAM_NODES[];
 

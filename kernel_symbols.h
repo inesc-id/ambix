@@ -32,9 +32,9 @@
 #include <linux/pagewalk.h>
 #include <linux/string.h>
 
-#define M(RET, NAME, SIGNATURE) \
-    typedef RET(*NAME##_t) SIGNATURE; \
-    extern NAME##_t g_##NAME;
+#define M(RET, NAME, SIGNATURE)                                                \
+	typedef RET(*NAME##_t) SIGNATURE;                                      \
+	extern NAME##_t g_##NAME;
 
 #include "IMPORT.M"
 
@@ -43,7 +43,6 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 5)
 extern atomic_t *g_lru_disable_count;
 #endif
-
 
 int import_symbols(void);
 

@@ -172,6 +172,7 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 	unsigned long found_addr, addr;
 	size_t pid_idx, temp_idx = -1;
 	struct task_struct *t = NULL;
+	struct mm_struct *mm = NULL;
 
 	if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
 		pr_err("Invalid node %d", node);
@@ -190,12 +191,15 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 		addr = (unsigned long)untagged_addr(found_addr);
 
 		if (pid_idx != temp_idx && t) {
+			mmput(mm);
 			put_task_struct(t);
+			mm = NULL;
 			t = NULL;
 		}
 
 		if (!t) {
 			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
+			mm = get_task_mm(t);
 			temp_idx = pid_idx;
 		}
 
@@ -203,7 +207,26 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 			continue;
 		}
 
-		err = add_page_for_migration(t->mm, addr, node, &pagelist);
+		if (!mm) {
+			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
+
+			if (t == NULL) {
+				pr_warn("Migration: Can't resolve struct of task (%d).\n",
+					pid_nr(PIDs[pid_idx].__pid));
+				goto out;
+			}
+
+			mm = get_task_mm(t);
+
+			if (mm == NULL) {
+				pr_warn("Migration: Can't resolve mm_struct of task (%d).\n",
+					pid_nr(PIDs[pid_idx].__pid));
+				goto out;
+			}
+			temp_idx = pid_idx;
+		}
+
+		err = add_page_for_migration(mm, addr, node, &pagelist);
 
 		if (err > 0) {
 			pages_migrated++;
@@ -216,6 +239,10 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 migrate:
 
 	if (t) {
+		if (mm) {
+			mmput(mm);
+			mm = NULL;
+		}
 		put_task_struct(t);
 		t = NULL;
 	}

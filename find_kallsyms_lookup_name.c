@@ -24,61 +24,68 @@
 #include <linux/kprobes.h>
 
 #define KPROBE_PRE_HANDLER(fname)                                              \
-  static int __kprobes fname(struct kprobe *p, struct pt_regs *regs)
+	static int __kprobes fname(struct kprobe *p, struct pt_regs *regs)
 
 long unsigned int kln_addr = 0;
 unsigned long (*the_kallsyms_lookup_name)(const char *name) = NULL;
 
 static struct kprobe kp0, kp1;
 
-KPROBE_PRE_HANDLER(handler_pre0) {
-  kln_addr = (--regs->ip);
+KPROBE_PRE_HANDLER(handler_pre0)
+{
+	kln_addr = (--regs->ip);
 
-  return 0;
+	return 0;
 }
 
-KPROBE_PRE_HANDLER(handler_pre1) { return 0; }
+KPROBE_PRE_HANDLER(handler_pre1)
+{
+	return 0;
+}
 
 static int do_register_kprobe(struct kprobe *kp, char *symbol_name,
-                              void *handler) {
-  int ret;
+			      void *handler)
+{
+	int ret;
 
-  kp->symbol_name = symbol_name;
-  kp->pre_handler = handler;
+	kp->symbol_name = symbol_name;
+	kp->pre_handler = handler;
 
-  ret = register_kprobe(kp);
-  if (ret < 0) {
-    pr_err("register_probe() for symbol %s failed, returned %d\n", symbol_name,
-           ret);
-    return ret;
-  }
+	ret = register_kprobe(kp);
+	if (ret < 0) {
+		pr_err("register_probe() for symbol %s failed, returned %d\n",
+		       symbol_name, ret);
+		return ret;
+	}
 
-  pr_debug("Planted kprobe for symbol %s at %p\n", symbol_name, kp->addr);
+	pr_debug("Planted kprobe for symbol %s at %p\n", symbol_name, kp->addr);
 
-  return ret;
+	return ret;
 }
 
-int find_kallsyms_lookup_name(void) {
-  int ret;
+int find_kallsyms_lookup_name(void)
+{
+	int ret;
 
-  pr_debug("Looking up 'kallsyms_lookup_name'\n");
+	pr_debug("Looking up 'kallsyms_lookup_name'\n");
 
-  ret = do_register_kprobe(&kp0, "kallsyms_lookup_name", handler_pre0);
-  if (ret < 0)
-    return ret;
+	ret = do_register_kprobe(&kp0, "kallsyms_lookup_name", handler_pre0);
+	if (ret < 0)
+		return ret;
 
-  ret = do_register_kprobe(&kp1, "kallsyms_lookup_name", handler_pre1);
-  if (ret < 0) {
-    unregister_kprobe(&kp0);
-    return ret;
-  }
+	ret = do_register_kprobe(&kp1, "kallsyms_lookup_name", handler_pre1);
+	if (ret < 0) {
+		unregister_kprobe(&kp0);
+		return ret;
+	}
 
-  unregister_kprobe(&kp0);
-  unregister_kprobe(&kp1);
+	unregister_kprobe(&kp0);
+	unregister_kprobe(&kp1);
 
-  pr_debug("kallsyms_lookup_name address = 0x%lx\n", kln_addr);
+	pr_debug("kallsyms_lookup_name address = 0x%lx\n", kln_addr);
 
-  the_kallsyms_lookup_name = (unsigned long (*)(const char *name))kln_addr;
+	the_kallsyms_lookup_name =
+		(unsigned long (*)(const char *name))kln_addr;
 
-  return 0;
+	return 0;
 }
