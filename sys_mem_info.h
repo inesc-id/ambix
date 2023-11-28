@@ -1,5 +1,5 @@
-#ifndef MEMORY_INFO_H
-#define MEMORY_INFO_H
+#ifndef SYS_MEM_INFO_H
+#define SYS_MEM_INFO_H
 
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 
@@ -31,4 +31,4 @@ u64 get_memory_total_ratio(enum pool_t pool);
 
 u64 get_memory_total(enum pool_t pool);
 
-#endif // MEMORY_INFO_H
+#endif // SYS_MEM_INFO_H
