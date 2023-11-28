@@ -25,7 +25,7 @@
 #include "config.h"
 #include "kernel_symbols.h"
 #include "migrate.h"
-#include "pid_management.h"
+#include "vm_management.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 5)
 /**
@@ -163,67 +163,71 @@ int kernel_migrate_pages(struct list_head *pagelist, int node)
 {
 	int err;
 
+	if (list_empty(pagelist))
+		return 0;
+
 	err = g_migrate_pages(pagelist, alloc_dst_page, NULL,
 			      (unsigned long)node, MIGRATE_SYNC, MR_SYSCALL);
 
 	if (err) {
-		pr_debug("migrate_pages has returned en error: %d\n", err);
 		g_putback_movable_pages(pagelist);
 	}
 
 	return err;
 }
 
-int do_migration(priority_queue *pds, const size_t n_to_migrate,
+int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 		 const enum pool_t dst, int priority)
 {
 	LIST_HEAD(pagelist);
 	size_t pages_migrated = 0;
 	const int *node_list = get_pool_nodes(dst);
-	int node =
-		node_list[0]; // FIXME: we need to pick nodes dynamically, relaying
-	// on space availability
-	int err = 0;
+	// TODO: pick nodes dynamically
+	int node = node_list[0];
+	int err, rc = 0;
 	unsigned long found_addr, addr;
-	size_t pid_idx, temp_idx = -1;
+	pid_t page_pid, last_page_pid = -1;
+	size_t vm_area_idx;
 	struct task_struct *t = NULL;
 	struct mm_struct *mm = NULL;
-	nodemask_t task_nodes;
+
+	my_lru_cache_disable();
 
 	if (node < 0 || node >= MAX_NUMNODES || !node_state(node, N_MEMORY)) {
-		pr_err("Invalid node %d", node);
-		return 0;
+		pr_err("Invalid node %d\n", node);
+		rc = -1;
+		goto out;
 	}
 
 	pr_debug("DO MIGRATION: %ld pages -> %s", n_to_migrate,
 		 get_pool_name(dst));
 
-	my_lru_cache_disable();
-
-	FREQ_ORDERED_TRAVERSE(pds, priority, found_addr, pid_idx)
-	{	
+	FREQ_ORDERED_TRAVERSE(heat_map, priority, found_addr, vm_area_idx)
+	{
 		if (pages_migrated >= n_to_migrate) {
-			goto out;
+			break;
 		}
 
 		addr = (unsigned long)untagged_addr(found_addr);
+		page_pid = pid_nr(AMBIX_VM_AREAS[vm_area_idx].__pid);
 
-		if (pid_idx != temp_idx && mm) {
-			if (!list_empty(&pagelist))
-				pages_migrated -=
-					kernel_migrate_pages(&pagelist, node);
+		if (page_pid != last_page_pid && mm) {
+			pages_migrated -= kernel_migrate_pages(&pagelist, node);
+
 			mmput(mm);
-			put_task_struct(t);
 			mm = NULL;
+			put_task_struct(t);
 			t = NULL;
 		}
 
 		if (!mm) {
-			t = get_pid_task(PIDs[pid_idx].__pid, PIDTYPE_PID);
+			t = get_pid_task(AMBIX_VM_AREAS[vm_area_idx].__pid,
+					 PIDTYPE_PID);
 
 			if (t == NULL) {
 				pr_warn("Migration: Can't resolve struct of task (%d).\n",
-					pid_nr(PIDs[pid_idx].__pid));
+					pid_nr(AMBIX_VM_AREAS[vm_area_idx]
+						       .__pid));
 				goto out;
 			}
 
@@ -231,36 +235,36 @@ int do_migration(priority_queue *pds, const size_t n_to_migrate,
 
 			if (mm == NULL) {
 				pr_warn("Migration: Can't resolve mm_struct of task (%d).\n",
-					pid_nr(PIDs[pid_idx].__pid));
+					pid_nr(AMBIX_VM_AREAS[vm_area_idx]
+						       .__pid));
 				goto out;
 			}
 
-			temp_idx = pid_idx;
+			last_page_pid = page_pid;
 		}
 
 		err = add_page_for_migration(mm, addr, node, &pagelist);
 
+		/*Page is successfully queued for migration*/
 		if (err > 0) {
 			pages_migrated++;
-			/*Page is successfully queued for migration*/
 		}
 	}
 
-out:
-	if (!list_empty(&pagelist))
-		pages_migrated -= kernel_migrate_pages(&pagelist, node);
+	pages_migrated -= kernel_migrate_pages(&pagelist, node);
 
 	pr_info("Successfully migrated %ld\n", pages_migrated);
-	err = pages_migrated;
 
-	if (mm) {
+out:
+	if (mm)
 		mmput(mm);
-	}
 
-	if (t) {
+	if (t)
 		put_task_struct(t);
-	}
 
 	my_lru_cache_enable();
-	return err;
+
+	rc = pages_migrated;
+
+	return rc;
 }

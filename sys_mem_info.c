@@ -1,5 +1,5 @@
 /**
- * @file    memory_info.c
+ * @file    sys_mem_info.c
  * @author  INESC-ID
  * @date    23 oct 2023
  * @version 1.0.0
@@ -17,9 +17,9 @@
 #include <linux/mm.h>
 
 #include "config.h"
-#include "memory_info.h"
+#include "sys_mem_info.h"
 #include "kernel_symbols.h"
-#include "pid_management.h"
+#include "vm_management.h"
 
 DEFINE_MUTEX(USAGE_mtx);
 
@@ -81,22 +81,22 @@ void walk_ranges_usage(void)
 	nvram_usage = 0;
 
 	mutex_lock(&USAGE_mtx);
-	for (i = 0; i < PIDs_size; i++) {
-		t = get_pid_task(PIDs[i].__pid, PIDTYPE_PID);
+	for (i = 0; i < VM_AREAS_COUNT; i++) {
+		t = get_pid_task(AMBIX_VM_AREAS[i].__pid, PIDTYPE_PID);
 		if (!t) {
 			pr_warn("Can't resolve task (%d).\n",
-				pid_nr(PIDs[i].__pid));
+				pid_nr(AMBIX_VM_AREAS[i].__pid));
 			continue;
 		}
 		mm = get_task_mm(t);
 		if (!mm) {
 			pr_warn("Can't resolve mm_struct of task (%d)",
-				pid_nr(PIDs[i].__pid));
+				pid_nr(AMBIX_VM_AREAS[i].__pid));
 			put_task_struct(t);
 			continue;
 		}
 		mmap_read_lock(mm);
-		g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr,
+		g_walk_page_range(mm, AMBIX_VM_AREAS[i].start_addr, AMBIX_VM_AREAS[i].end_addr,
 				  &mem_walk_ops, NULL);
 		mmap_read_unlock(mm);
 		
