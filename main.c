@@ -31,6 +31,7 @@
 #include "perf_counters.h"
 #include "placement.h"
 #include "tsc.h"
+#include "vm_management.h"
 
 #define PROC_NAME "ambix"
 
