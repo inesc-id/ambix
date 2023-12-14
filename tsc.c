@@ -3,7 +3,7 @@
  * @file    tsc.c
  * @author  INESC-ID
  * @date    26 jul 2023
- * @version 2.1.1
+ * @version 2.2.0
  * @brief  Helper functions to convert clock cycles to seconds. Intended for
  * the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
  * <ilia.kuzmin@tecnico.ulisboa.pt>

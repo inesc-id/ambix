@@ -3,7 +3,7 @@
  * @file    main.c
  * @author  INESC-ID
  * @date    26 jul 2023
- * @version 2.1.1
+ * @version 2.2.0
  * @brief  Kernel module init, cleanup and procfs handling routines. Intended
  * for the 5.10.0 linux kernel. Adapted from the code provided by ilia kuzmin
  * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code implemented by miguel
@@ -38,7 +38,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("INESC-ID");
 MODULE_DESCRIPTION("Ambix - Bandwidth-aware page replacement");
-MODULE_VERSION("2.1.1");
+MODULE_VERSION("2.2.0");
 
 static bool g_show_aggregates = true;
 static bool g_perf_enabled = true;
