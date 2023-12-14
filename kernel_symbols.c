@@ -2,7 +2,7 @@
  * @file
  * @author  INESC-ID
  * @date
- * @version 2.1.1
+ * @version 2.2.0
  * @brief   Adapted from the code provided by ilia kuzmin
  * <ilia.kuzmin@tecnico.ulisboa.pt>, adapted from the code provided by reza
  * karimi <r68karimi@gmail.com>, adapted from the code implemented by miguel
