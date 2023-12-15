@@ -471,6 +471,7 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 {
 	pte_entry_handler_t pte_handler;
 	ctx->n_found = 0;
+	ctx->n_to_find = n; 
 
 	switch (mode) {
 	case DEMOTE_PAGES:
