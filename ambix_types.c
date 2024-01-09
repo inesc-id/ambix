@@ -10,13 +10,13 @@
 #include "ambix_types.h" // Include the header file here
 
 inline void heat_map_add_page(struct vm_heat_map *heat_map, unsigned long address,
-			    size_t pid, enum access_freq_t access_freq)
+			    struct pid* pid_p, enum access_freq_t access_freq)
 {
 	if (heat_map->index[access_freq] < MAX_ADDRESSES) {
 		heat_map->addresses[access_freq][heat_map->index[access_freq]].addr =
 			address;
-		heat_map->addresses[access_freq][heat_map->index[access_freq]++].vm_area_idx =
-			pid;
+		heat_map->addresses[access_freq][heat_map->index[access_freq]++].vm_area_pid =
+			pid_p;
 	}
 }
 

@@ -12,13 +12,14 @@
 #include <linux/pid.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
+#include <linux/hashtable.h>
 
 #include "vm_management.h"
 
 DEFINE_MUTEX(VM_AREAS_LOCK);
 
-struct vm_area_t AMBIX_VM_AREAS[MAX_VM_AREAS];
-size_t VM_AREAS_COUNT = 0;
+//! Hash table size should be user definable 
+DEFINE_HASHTABLE(AMBIX_VM_AREAS, 7);
 
 int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 			       unsigned long end_addr,
@@ -26,7 +27,9 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 			       unsigned long size)
 {
 	struct pid *pid_p = NULL;
-	size_t i;
+	struct vm_area_t *current;
+	struct hlist_node *tmp;
+	unsigned int bkt;
 	int rc = 0;
 
 	pid_p = find_get_pid(pid);
@@ -38,30 +41,42 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	if (VM_AREAS_COUNT == MAX_VM_AREAS) {
-		pr_warn("Managed AMBIX_VM_AREAS at capacity.\n");
-		rc = -1;
-		goto out_unlock_put;
-	}
+	hash_for_each (AMBIX_VM_AREAS, bkt, current, node) {
+		if (pid_nr(current->__pid) == pid) {
+			if (current->start_addr == start_addr &&
+			    current->end_addr == end_addr) {
+				pr_info("Already managing given vm range.\n");
+				rc = -1;
+				goto out_unlock_put;
+			}
 
-	for (i = 0; i < VM_AREAS_COUNT; i++) {
-		if (pid_nr(AMBIX_VM_AREAS[i].__pid) == pid &&
-		    AMBIX_VM_AREAS[i].start_addr == start_addr &&
-		    AMBIX_VM_AREAS[i].end_addr == end_addr) {
-			pr_info("Already managing given vm range.\n");
-			rc = -1;
-			goto out_unlock_put;
+			if (current->end_addr == MAX_ADDRESS) {
+				pr_info("Already entire process vm range.\n");
+				rc = -1;
+				goto out_unlock_put;
+			}
 		}
 	}
 
-	AMBIX_VM_AREAS[VM_AREAS_COUNT].__pid = pid_p;
-	AMBIX_VM_AREAS[VM_AREAS_COUNT].start_addr = start_addr;
-	AMBIX_VM_AREAS[VM_AREAS_COUNT].end_addr = end_addr;
-	AMBIX_VM_AREAS[VM_AREAS_COUNT].allocation_site =
-		allocation_site;
-	AMBIX_VM_AREAS[VM_AREAS_COUNT].size = size;
+	struct vm_area_t *new_area = kmalloc(sizeof(*new_area), GFP_KERNEL);
 
-	VM_AREAS_COUNT++;
+	if (!new_area) {
+		pr_info("Failed to allocate memory for new vm_area\n");
+		goto out_unlock_put;
+	}
+
+	new_area->__pid = pid_p;
+	new_area->start_addr = start_addr;
+	new_area->end_addr = end_addr;
+	new_area->total_size_bytes = size;
+	new_area->fast_tier_bytes = 0;
+	new_area->slow_tier_bytes = 0;
+
+	if(allocation_site == 0){
+		new_area->allocation_site = pid_nr(pid_p);
+	}
+
+	hash_add(AMBIX_VM_AREAS, &new_area->node, new_area->allocation_site);
 
 	pr_info("Bound pid=%d with start_addr=%lx and end_addr=%lx.\n", pid,
 		start_addr, end_addr);
@@ -84,15 +99,23 @@ int ambix_bind_pid(const pid_t nr)
 
 int ambix_unbind_pid(const pid_t pid)
 {
-	size_t i;
+	struct vm_area_t *current;
+	struct hlist_node *tmp;
+	unsigned int bkt;
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	for (i = 0; i < VM_AREAS_COUNT; i++) {
-		if (pid_nr(AMBIX_VM_AREAS[i].__pid) == pid) {
-			put_pid(AMBIX_VM_AREAS[i].__pid);
-			AMBIX_VM_AREAS[i] =
-				AMBIX_VM_AREAS[--VM_AREAS_COUNT];
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
+		if (pid_nr(current->__pid) == pid) {
+			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
+				pid, current->start_addr, current->end_addr);
+
+			put_pid(current->__pid);
+
+			hash_del(&current->node);
+			kfree(current);
+
+			break;
 		}
 	}
 
@@ -104,19 +127,22 @@ int ambix_unbind_pid(const pid_t pid)
 int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 			   unsigned long end)
 {
-	int i;
+	struct vm_area_t *current;
+	struct hlist_node *tmp;
+	unsigned int bkt;
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	for (i = 0; i < VM_AREAS_COUNT; i++) {
-		if (pid_nr(AMBIX_VM_AREAS[i].__pid) == pid &&
-		    start == AMBIX_VM_AREAS[i].start_addr &&
-		    end == AMBIX_VM_AREAS[i].end_addr) {
-			put_pid(AMBIX_VM_AREAS[i].__pid);
-			AMBIX_VM_AREAS[i] =
-				AMBIX_VM_AREAS[--VM_AREAS_COUNT];
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
+		if (pid_nr(current->__pid) == pid &&
+		    start == current->start_addr && end == current->end_addr) {
+			put_pid(current->__pid);
 
-			pr_info("Unbound pid=%d.\n", pid);
+			hash_del(&current->node);
+			kfree(current);
+
+			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
+				pid, start, end);
 			break;
 		}
 	}
@@ -129,21 +155,40 @@ int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 // NB! should be called under VM_AREAS_LOCK lock
 void refresh_bound_vm_areas(void)
 {
-	int i = 0;
+	struct vm_area_t *current;
+	struct hlist_node *tmp;
+	unsigned int bkt;
 
-	while (i < VM_AREAS_COUNT) {
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
 		struct task_struct *t =
-			get_pid_task(AMBIX_VM_AREAS[i].__pid, PIDTYPE_PID);
+			get_pid_task(current->__pid, PIDTYPE_PID);
 		if (t) {
 			put_task_struct(t);
 			i++;
 			continue;
 		}
 
-		pr_info("Process %d has gone.\n",
-			pid_nr(AMBIX_VM_AREAS[i].__pid));
+		pr_info("Process %d has gone.\n", pid_nr(current->__pid));
 
-		put_pid(AMBIX_VM_AREAS[i].__pid);
-		AMBIX_VM_AREAS[i] = AMBIX_VM_AREAS[--VM_AREAS_COUNT];
+		put_pid(current->__pid);
+		hash_del(&current->node);
+		kfree(current);
 	}
+}
+
+// NB! should be called under VM_AREAS_LOCK lock
+struct vm_area_t * get_vm_area(unsigned long allocation_site){
+
+	struct h_node *current, ret = NULL;
+    unsigned bkt;
+
+	hash_for_each_possible(AMBIX_VM_AREAS, cur, node, allocation_site) {
+        // Check the name.
+        if (current->allocation_site == allocation_site) {
+			ret = current;
+            break;
+        }
+    }
+
+	return ret;
 }

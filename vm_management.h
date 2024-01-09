@@ -11,15 +11,27 @@
 		 0xC0000000UL) // Max user-space addresses for the x86 architecture
 
 struct vm_area_t {
+	struct hlist_node node;
 	struct pid *__pid;
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long allocation_site;
-	unsigned long size;
+	unsigned long total_size_bytes;
+	unsigned long fast_tier_bytes;
+	unsigned long slow_tier_bytes;
 };
 
-extern struct vm_area_t AMBIX_VM_AREAS[MAX_VM_AREAS];
-extern size_t VM_AREAS_COUNT;
+#define HASH_ITERATE_CIRCULAR_ENDLESS(name, bkt, start_key, start_obj, current)             \
+	for (bkt = hash_min(start_key, HASH_BITS(name));;             \
+	     bkt = (bkt + 1) % (1 << HASH_BITS(name)),                         \
+		      start_obj = &(name[bkt])->first)                         \
+		for (current = hlist_entry_safe(start_obj, typeof(*(current)), \
+						node);                         \
+		     current;                                                  \
+		     current = hlist_entry_safe((current)->member.next,        \
+						typeof(*(current)), node))
+
+extern struct hlist_head AMBIX_VM_AREAS[];
 extern struct mutex VM_AREAS_LOCK;
 
 int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,

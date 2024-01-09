@@ -35,7 +35,7 @@ enum access_freq_t {
 // Define your struct and function declarations here
 typedef struct addr_info {
 	unsigned long addr;
-	size_t vm_area_idx;
+	struct pid * vm_area_pid;
 } addr_info_t;
 
 typedef struct vm_heat_map{
@@ -43,7 +43,7 @@ typedef struct vm_heat_map{
 	int index[NUM_FREQ_TYPES];
 } vm_heat_map;
 
-void heat_map_add_page(struct vm_heat_map *heat_map, unsigned long address, size_t pid,
+void heat_map_add_page(struct vm_heat_map *heat_map, unsigned long address, struct pid* pid_p,
 		     enum access_freq_t access_freq);
 u32 heat_map_size(struct vm_heat_map *heat_map);
 void heat_map_clear(struct vm_heat_map *heat_map);
