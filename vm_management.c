@@ -10,25 +10,27 @@
  */
 
 #include <linux/pid.h>
-#include <linux/mutex.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/rwlock.h>
 
 #include "vm_management.h"
+#include "sys_mem_info.h"
 
-DEFINE_MUTEX(VM_AREAS_LOCK);
 
-//! Hash table size should be user definable 
-DEFINE_HASHTABLE(AMBIX_VM_AREAS, 7);
+
+
+rwlock_t my_rwlock = RW_LOCK_UNLOCKED;
+
+struct list_head AMBIX_VM_AREAS;
 
 int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 			       unsigned long end_addr,
 			       unsigned long allocation_site,
-			       unsigned long size)
+			       unsigned long size, int migrate_pages)
 {
 	struct pid *pid_p = NULL;
 	struct vm_area_t *current_vm;
-	unsigned int bkt;
 	int rc = 0;
 
 	pid_p = find_get_pid(pid);
@@ -38,9 +40,9 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 		goto out;
 	}
 
-	mutex_lock(&VM_AREAS_LOCK);
+	write_lock(&my_rwlock);
 
-	hash_for_each (AMBIX_VM_AREAS, bkt, current_vm, node) {
+	list_for_each_entry (current_vm, &AMBIX_VM_AREAS, node) {
 		if (pid_nr(current_vm->__pid) == pid) {
 			if (current_vm->start_addr == start_addr &&
 			    current_vm->end_addr == end_addr) {
@@ -61,6 +63,7 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 
 	if (!new_area) {
 		pr_info("Failed to allocate memory for new vm_area\n");
+		rc = -1;
 		goto out_unlock_put;
 	}
 
@@ -70,13 +73,30 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 	new_area->total_size_bytes = size;
 	new_area->fast_tier_bytes = 0;
 	new_area->slow_tier_bytes = 0;
+	new_area->migrate_pages = migrate_pages;
 
-	if(allocation_site == 0){
-		new_area->allocation_site = pid_nr(pid_p);
+	// Insert in order
+	struct vm_area_t *current_area;
+	list_for_each_entry (current_area, &AMBIX_VM_AREAS, node) {
+		if (pid < pid_nr(current_area->__pid)) {
+			list_add_tail(&new_area->node, &current_area->node);
+			goto inserted;
+		} else if (pid > pid_nr(current_area->__pid)) {
+			continue;
+		} else
+			(current_area->start_addr > new_area->start_addr)
+			{
+				list_add_tail(&new_area->node,
+					      &current_area->node);
+				goto inserted;
+			}
 	}
+	list_add_tail(&new_area->node, &AMBIX_VM_AREAS);
 
-	hash_add(AMBIX_VM_AREAS, &new_area->node, new_area->allocation_site);
+	create_proc_file(pid_nr(new_area->__pid), new_area->start_addr);
 
+
+inserted:
 	pr_info("Bound pid=%d with start_addr=%lx and end_addr=%lx.\n", pid,
 		start_addr, end_addr);
 
@@ -85,7 +105,7 @@ out_unlock_put:
 	if (rc == -1)
 		put_pid(pid_p);
 
-	mutex_unlock(&VM_AREAS_LOCK);
+	write_unlock(&my_rwlock);
 
 out:
 	return rc;
@@ -93,32 +113,28 @@ out:
 
 int ambix_bind_pid(const pid_t nr)
 {
-	return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0);
+	return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0, 1);
 }
 
 int ambix_unbind_pid(const pid_t pid)
 {
-	struct vm_area_t *current_vm;
-	struct hlist_node *tmp;
-	unsigned int bkt;
+	struct vm_area_t *current_vm, *tmp;
 
-	mutex_lock(&VM_AREAS_LOCK);
+	write_lock(&my_rwlock);
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
 		if (pid_nr(current_vm->__pid) == pid) {
 			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
-				pid, current_vm->start_addr, current_vm->end_addr);
+				pid, current_vm->start_addr,
+				current_vm->end_addr);
 
 			put_pid(current_vm->__pid);
-
-			hash_del(&current_vm->node);
+			list_del(&current_vm->node);
 			kfree(current_vm);
-
-			break;
 		}
 	}
 
-	mutex_unlock(&VM_AREAS_LOCK);
+	write_unlock(&my_rwlock);
 
 	return 0;
 }
@@ -126,18 +142,17 @@ int ambix_unbind_pid(const pid_t pid)
 int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 			   unsigned long end)
 {
-	struct vm_area_t *current_vm;
-	struct hlist_node *tmp;
-	unsigned int bkt;
+	struct vm_area_t *current_vm, *tmp;
 
-	mutex_lock(&VM_AREAS_LOCK);
+	write_lock(&my_rwlock);
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
 		if (pid_nr(current_vm->__pid) == pid &&
-		    start == current_vm->start_addr && end == current_vm->end_addr) {
+		    start == current_vm->start_addr &&
+		    end == current_vm->end_addr) {
 			put_pid(current_vm->__pid);
 
-			hash_del(&current_vm->node);
+			list_del(&current_vm->node);
 			kfree(current_vm);
 
 			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
@@ -146,46 +161,48 @@ int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 		}
 	}
 
-	mutex_unlock(&VM_AREAS_LOCK);
+	write_unlock(&my_rwlock);
 
 	return 0;
 }
 
-// NB! should be called under VM_AREAS_LOCK lock
 void refresh_bound_vm_areas(void)
 {
-	struct vm_area_t *current_vm;
-	struct hlist_node *tmp;
-	unsigned int bkt;
+	struct vm_area_t *current_vm, *tmp;
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+	write_lock(&my_rwlock);
+
+	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
 		struct task_struct *t =
 			get_pid_task(current_vm->__pid, PIDTYPE_PID);
+		get_pid_task(current_vm->__pid, PIDTYPE_PID);
 		if (t) {
 			put_task_struct(t);
 			continue;
 		}
 
-		pr_info("Process %d has gone.\n", pid_nr(current_vm->__pid));
+		pr_info("Process %d unbound from ambix.\n",
+			pid_nr(current_vm->__pid));
 
 		put_pid(current_vm->__pid);
-		hash_del(&current_vm->node);
 		kfree(current_vm);
 	}
+
+	write_unlock(&my_rwlock);
 }
 
-// NB! should be called under VM_AREAS_LOCK lock
-struct vm_area_t * ambix_get_vm_area(unsigned long allocation_site){
+//! Should be called holding read_lock(&my_rwlock);
+struct vm_area_t *get_vm_area(int pid, unsigned long addr)
+{
+	struct vm_area_t *current_vm;
 
-	struct vm_area_t *current_vm, *ret = NULL;
+	list_for_each_entry (current_vm, &AMBIX_VM_AREAS, node) {
+		if (pid_nr(current_vm->__pid) == pid &&
+		    current_vm->start_addr >= addr &&
+		    current_vm->end_addr <= addr) {
+			return current_vm;
+		}
+	}
 
-	hash_for_each_possible(AMBIX_VM_AREAS, current_vm, node, allocation_site) {
-        // Check the name.
-        if (current_vm->allocation_site == allocation_site) {
-			ret = current_vm;
-            break;
-        }
-    }
-
-	return ret;
+	return NULL; // Return NULL if not found
 }

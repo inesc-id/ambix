@@ -1,10 +1,9 @@
 #ifndef VM_MANAGEMENT_H
 #define VM_MANAGEMENT_H
 
-#include <linux/hashtable.h>
+#include <linux/rwlock.h>
 
-// sets the number of virtual memory ranges that can be bound to Ambix at any given time
-#define MAX_VM_AREAS 20
+
 
 #define IS_64BIT (sizeof(void *) == 8)
 #define MAX_ADDRESS                                                            \
@@ -21,23 +20,20 @@ struct vm_area_t {
 	unsigned long total_size_bytes;
 	unsigned long fast_tier_bytes;
 	unsigned long slow_tier_bytes;
+	int migrate_pages;
 };
 
-#define HASH_ITERATE_CIRCULAR_ENDLESS(name, bkt, start_key, start_obj, current_vm)             \
-	for (bkt = hash_min(start_key, HASH_BITS(name));;             \
-	     bkt = (bkt + 1) % (1 << HASH_BITS(name)),                         \
-		      start_obj = (&name[bkt])->first)                         \
-		for (current_vm = hlist_entry_safe(start_obj, typeof(*(current_vm)), \
-						node);                         \
-		     current_vm;                                                  \
-		     current_vm = hlist_entry_safe((current_vm)->node.next,        \
-						typeof(*(current_vm)), node))
+struct vm_area_walk_t {
+	int start_pid;
+	unsigned long start_addr;
+	int end_pid;
+	unsigned long end_addr;
+};	
 
-#define AMBIX_VM_AREAS_BITS 7
 
-extern struct hlist_head AMBIX_VM_AREAS[1 << AMBIX_VM_AREAS_BITS];
+extern struct list_head AMBIX_VM_AREAS;
+extern rwlock_t my_rwlock;
 
-extern struct mutex VM_AREAS_LOCK;
 
 int ambix_bind_pid_constrained(const pid_t nr, unsigned long start_addr,
 			       unsigned long end_addr,

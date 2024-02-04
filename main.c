@@ -33,7 +33,8 @@
 #include "tsc.h"
 #include "vm_management.h"
 
-#define PROC_NAME "ambix"
+#define PROC_NAME "mem_info"
+#define PROC_DIR_NAME "ambix"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("INESC-ID");
@@ -42,6 +43,7 @@ MODULE_VERSION("2.2.0");
 
 static bool g_show_aggregates = true;
 static bool g_perf_enabled = true;
+static struct proc_dir_entry *proc_dir;
 
 /**
  * Handler to generate output when reading from /proc/ambix
@@ -211,7 +213,7 @@ static int kmod_proc_open(struct inode *node, struct file *file)
 	return single_open(file, kmod_show, NULL);
 };
 
-static const struct proc_ops kmod_proc_ops = {
+static const struct kmod_proc_ops = {
 	.proc_open = kmod_proc_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
@@ -308,7 +310,13 @@ int init(void)
 		return rc;
 	}
 
-	entry = proc_create(PROC_NAME, 0666, NULL, &kmod_proc_ops);
+	proc_dir = proc_mkdir(PROC_DIR_NAME, NULL);
+	if (!proc_dir) {
+		pr_warn("proc initialization failed");
+		return -ENOMEM;
+	}
+
+	entry = proc_create(PROC_NAME, 0666, proc_dir, &kmod_proc_ops);
 	if (!entry) {
 		pr_warn("proc initialization failed");
 		return -ENOMEM;
