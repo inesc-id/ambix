@@ -79,7 +79,7 @@ void walk_ranges_usage(void)
 	struct task_struct *t = NULL;
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_callback_usage };
 	struct mm_struct *mm = NULL;
-	struct vm_area_t *current;
+	struct vm_area_t *current_vm;
 	struct hlist_node *tmp;
 	unsigned int bkt;
 
@@ -90,17 +90,17 @@ void walk_ranges_usage(void)
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
-		t = get_pid_task(current->__pid, PIDTYPE_PID);
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+		t = get_pid_task(current_vm->__pid, PIDTYPE_PID);
 		if (!t) {
 			pr_warn("Can't resolve task (%d).\n",
-				pid_nr(current->__pid));
+				pid_nr(current_vm->__pid));
 			continue;
 		}
 		mm = get_task_mm(t);
 		if (!mm) {
 			pr_warn("Can't resolve mm_struct of task (%d)",
-				pid_nr(current->__pid));
+				pid_nr(current_vm->__pid));
 			put_task_struct(t);
 			continue;
 		}
@@ -109,19 +109,19 @@ void walk_ranges_usage(void)
 		nvram_usage = 0;
 
 		mmap_read_lock(mm);
-		g_walk_page_range(mm, current->start_addr, current->end_addr,
+		g_walk_page_range(mm, current_vm->start_addr, current_vm->end_addr,
 				  &mem_walk_ops, NULL);
 		mmap_read_unlock(mm);
 
-		current->fast_tier_bytes = dram_usage;
-		current->slow_tier_bytes = nvram_usage;
+		current_vm->fast_tier_bytes = dram_usage;
+		current_vm->slow_tier_bytes = nvram_usage;
 
 		pr_info("{PID: %d, Start Addr: %lx, End Addr: %lx, Allocation Site: %lx, "
 			"Total Size Bytes: %lu, Fast Tier Bytes: %lu, Slow Tier Bytes: %lu}\n",
-			pid_vnr(current->__pid), current->start_addr,
-			current->end_addr, current->allocation_site,
-			current->total_size_bytes, current->fast_tier_bytes,
-			current->slow_tier_bytes);
+			pid_vnr(current_vm->__pid), current_vm->start_addr,
+			current_vm->end_addr, current_vm->allocation_site,
+			current_vm->total_size_bytes, current_vm->fast_tier_bytes,
+			current_vm->slow_tier_bytes);
 
 		total_dram_usage += dram_usage;
 		total_nvram_usage += nvram_usage;

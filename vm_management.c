@@ -12,7 +12,7 @@
 #include <linux/pid.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
-#include <linux/hashtable.h>
+#include <linux/slab.h>
 
 #include "vm_management.h"
 
@@ -27,8 +27,7 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 			       unsigned long size)
 {
 	struct pid *pid_p = NULL;
-	struct vm_area_t *current;
-	struct hlist_node *tmp;
+	struct vm_area_t *current_vm;
 	unsigned int bkt;
 	int rc = 0;
 
@@ -41,16 +40,16 @@ int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	hash_for_each (AMBIX_VM_AREAS, bkt, current, node) {
-		if (pid_nr(current->__pid) == pid) {
-			if (current->start_addr == start_addr &&
-			    current->end_addr == end_addr) {
+	hash_for_each (AMBIX_VM_AREAS, bkt, current_vm, node) {
+		if (pid_nr(current_vm->__pid) == pid) {
+			if (current_vm->start_addr == start_addr &&
+			    current_vm->end_addr == end_addr) {
 				pr_info("Already managing given vm range.\n");
 				rc = -1;
 				goto out_unlock_put;
 			}
 
-			if (current->end_addr == MAX_ADDRESS) {
+			if (current_vm->end_addr == MAX_ADDRESS) {
 				pr_info("Already entire process vm range.\n");
 				rc = -1;
 				goto out_unlock_put;
@@ -99,21 +98,21 @@ int ambix_bind_pid(const pid_t nr)
 
 int ambix_unbind_pid(const pid_t pid)
 {
-	struct vm_area_t *current;
+	struct vm_area_t *current_vm;
 	struct hlist_node *tmp;
 	unsigned int bkt;
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
-		if (pid_nr(current->__pid) == pid) {
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+		if (pid_nr(current_vm->__pid) == pid) {
 			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
-				pid, current->start_addr, current->end_addr);
+				pid, current_vm->start_addr, current_vm->end_addr);
 
-			put_pid(current->__pid);
+			put_pid(current_vm->__pid);
 
-			hash_del(&current->node);
-			kfree(current);
+			hash_del(&current_vm->node);
+			kfree(current_vm);
 
 			break;
 		}
@@ -127,19 +126,19 @@ int ambix_unbind_pid(const pid_t pid)
 int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 			   unsigned long end)
 {
-	struct vm_area_t *current;
+	struct vm_area_t *current_vm;
 	struct hlist_node *tmp;
 	unsigned int bkt;
 
 	mutex_lock(&VM_AREAS_LOCK);
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
-		if (pid_nr(current->__pid) == pid &&
-		    start == current->start_addr && end == current->end_addr) {
-			put_pid(current->__pid);
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
+		if (pid_nr(current_vm->__pid) == pid &&
+		    start == current_vm->start_addr && end == current_vm->end_addr) {
+			put_pid(current_vm->__pid);
 
-			hash_del(&current->node);
-			kfree(current);
+			hash_del(&current_vm->node);
+			kfree(current_vm);
 
 			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
 				pid, start, end);
@@ -155,37 +154,35 @@ int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
 // NB! should be called under VM_AREAS_LOCK lock
 void refresh_bound_vm_areas(void)
 {
-	struct vm_area_t *current;
+	struct vm_area_t *current_vm;
 	struct hlist_node *tmp;
 	unsigned int bkt;
 
-	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current, node) {
+	hash_for_each_safe (AMBIX_VM_AREAS, bkt, tmp, current_vm, node) {
 		struct task_struct *t =
-			get_pid_task(current->__pid, PIDTYPE_PID);
+			get_pid_task(current_vm->__pid, PIDTYPE_PID);
 		if (t) {
 			put_task_struct(t);
-			i++;
 			continue;
 		}
 
-		pr_info("Process %d has gone.\n", pid_nr(current->__pid));
+		pr_info("Process %d has gone.\n", pid_nr(current_vm->__pid));
 
-		put_pid(current->__pid);
-		hash_del(&current->node);
-		kfree(current);
+		put_pid(current_vm->__pid);
+		hash_del(&current_vm->node);
+		kfree(current_vm);
 	}
 }
 
 // NB! should be called under VM_AREAS_LOCK lock
-struct vm_area_t * get_vm_area(unsigned long allocation_site){
+struct vm_area_t * ambix_get_vm_area(unsigned long allocation_site){
 
-	struct h_node *current, ret = NULL;
-    unsigned bkt;
+	struct vm_area_t *current_vm, *ret = NULL;
 
-	hash_for_each_possible(AMBIX_VM_AREAS, cur, node, allocation_site) {
+	hash_for_each_possible(AMBIX_VM_AREAS, current_vm, node, allocation_site) {
         // Check the name.
-        if (current->allocation_site == allocation_site) {
-			ret = current;
+        if (current_vm->allocation_site == allocation_site) {
+			ret = current_vm;
             break;
         }
     }

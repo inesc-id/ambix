@@ -18,7 +18,7 @@
 		for (__i__ = 0;                                                \
 		     __i__ < heat_map->index[__freq__] && ({                        \
 			     vm_area_idx =                                         \
-				     heat_map->addresses[__freq__][__i__].vm_area_idx;  \
+				     heat_map->addresses[__freq__][__i__].vm_area_pid;  \
 			     address = heat_map->addresses[__freq__][__i__].addr;   \
 			     1;                                                \
 		     });                                                       \
