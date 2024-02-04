@@ -94,3 +94,34 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end)
 	snprintf(buffer, 1023, "unbind_range_pid %d %lx %lx", pid, start, end);
 	return write_procfs(buffer);
 }
+
+int get_mem_info(unsigned long start_addr, mem_info *info)
+{
+	char path[256];
+	FILE *file;
+	int result;
+
+	// Create the path to the proc file
+	snprintf(path, sizeof(path), "/proc/%lu", start_addr);
+
+	// Open the proc file
+	file = fopen(path, "r");
+	if (file == NULL) {
+		perror("Failed to open proc file");
+		return -1;
+	}
+
+	// Read the proc file
+	result = fscanf(file, "%lu, %lu, %lu", &info->slow_tier_usage_bytes,
+			&info->fast_tier_usage_bytes, &info->allocation_site);
+
+	// Close the proc file
+	fclose(file);
+
+	if (result != 3) {
+		fprintf(stderr, "Failed to parse proc file\n");
+		return -1;
+	}
+
+	return 0;
+}
