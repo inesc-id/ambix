@@ -34,4 +34,6 @@ u64 get_memory_total_ratio(enum pool_t pool);
 
 u64 get_memory_total(enum pool_t pool);
 
+int create_proc_file(int pid, unsigned long start_addr);
+
 #endif // SYS_MEM_INFO_H

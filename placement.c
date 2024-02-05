@@ -81,8 +81,8 @@ struct pte_callback_context_t {
 	struct vm_heat_map slow_tier_pages;
 } static g_context = { 0 };
 
-struct vm_area_scan_t last_fast_tier_scan;
-struct vm_area_scan_t last_slow_tier_scan;
+struct vm_area_walk_t last_fast_tier_scan;
+struct vm_area_walk_t last_slow_tier_scan;
 
 unsigned long long pages_walked = 0;
 unsigned long long total_migrations = 0;
@@ -366,19 +366,19 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 			   pte_entry_handler_t pte_handler,
 			   struct pte_callback_context_t *ctx)
 {
-	struct vm_area_t *start_vm, *current_vm;
+	struct vm_area_t *start_vm, *current_vm, *tmp;
 	int walk_count = 0;
 	unsigned long left, right;
 	struct vm_area_walk_t ret;
 	ret.start_pid = start_pid;
 	ret.start_addr = start_addr;
 
+	read_lock(&my_rwlock);
+
 	start_vm = ambix_get_vm_area(start_pid, start_addr);
 
-	if (!start_vm)
-		start_vm = AMBIX_VM_AREAS;
-
-	struct hlist_node *start_node = &start_vm->node;
+	struct list_head *start_node =
+		start_vm ? &start_vm->node : &AMBIX_VM_AREAS;
 
 	list_for_each_entry_safe (current_vm, tmp, start_node, node) {
 		if (!current_vm->migrate_pages)
@@ -412,6 +412,8 @@ out:
 	ret.end_pid = pid_nr(current_vm->__pid);
 	ret.end_addr = ctx->last_addr;
 
+	read_unlock(&my_rwlock);
+
 	return ret;
 }
 
@@ -430,15 +432,15 @@ static int do_fast_tier_page_walk(pte_entry_handler_t pte_handler,
 	pr_info("Fast tier page walk\n");
 
 	struct vm_area_walk_t last_vm_area =
-		walk_all_vm_ranges(last_fast_tier_scan->end_pid,
-				   last_fast_tier_scan->end_addr, pte_handler,
+		walk_all_vm_ranges(last_fast_tier_scan.end_pid,
+				   last_fast_tier_scan.end_addr, pte_handler,
 				   ctx);
 
-	last_fast_tier_scan->start_pid = last_fast_tier_scan->end_pid;
-	last_fast_tier_scan->start_addr = last_fast_tier_scan->end_addr;
+	last_fast_tier_scan.start_pid = last_fast_tier_scan.end_pid;
+	last_fast_tier_scan.start_addr = last_fast_tier_scan.end_addr;
 
-	last_fast_tier_scan->end_pid = last_vm_area.end_pid;
-	last_fast_tier_scan->end_addr = last_vm_area.end_addr;
+	last_fast_tier_scan.end_pid = last_vm_area.end_pid;
+	last_fast_tier_scan.end_addr = last_vm_area.end_addr;
 
 	return heat_map_size(&ctx->fast_tier_pages);
 }
@@ -449,12 +451,12 @@ static int do_slow_tier_page_walk(pte_entry_handler_t pte_handler,
 	pr_info("Slow tier page walk\n");
 
 	struct vm_area_walk_t last_vm_area = walk_vm_ranges_constrained(
-		last_slow_tier_scan->start_pid, last_slow_tier_scan->end_pid,
-		last_slow_tier_scan->start_addr, last_slow_tier_scan->end_addr,
+		last_fast_tier_scan.start_pid, last_fast_tier_scan.end_pid,
+		last_fast_tier_scan.start_addr, last_fast_tier_scan.end_addr,
 		pte_handler, ctx);
 
-	last_slow_tier_scan->start_pid = last_vm_area.end_pid;
-	last_slow_tier_scan->start_pid = last_vm_area.end_addr;
+	last_fast_tier_scan.start_pid = last_vm_area.end_pid;
+	last_fast_tier_scan.start_pid = last_vm_area.end_addr;
 
 	return heat_map_size(&ctx->slow_tier_pages);
 }
@@ -465,15 +467,15 @@ static int clear_slow_tier_ptes(struct pte_callback_context_t *ctx)
 
 	pr_info("Clearing NVRAM PTEs\n");
 	struct vm_area_walk_t last_vm_area =
-		walk_all_vm_ranges(last_slow_tier_scan->end_pid,
-				   last_slow_tier_scan->end_addr,
+		walk_all_vm_ranges(last_fast_tier_scan.end_pid,
+				   last_fast_tier_scan.end_addr,
 				   slow_tier_clear_pte_callback, ctx);
 
-	last_slow_tier_scan->start_pid = last_slow_tier_scan->end_pid, ;
-	last_slow_tier_scan->start_pid = llast_slow_tier_scan->end_addr;
+	last_fast_tier_scan.start_pid = last_fast_tier_scan.end_pid;
+	last_fast_tier_scan.start_pid = last_fast_tier_scan.end_addr;
 
-	last_slow_tier_scan->end_pid = last_vm_area.end_pid;
-	last_slow_tier_scan->end_addr = last_vm_area.end_addr;
+	last_fast_tier_scan.end_pid = last_vm_area.end_pid;
+	last_fast_tier_scan.end_addr = last_vm_area.end_addr;
 
 	return ctx->n_found;
 }
@@ -638,8 +640,8 @@ int ambix_check_memory(void)
 	int i = 0;
 	struct pte_callback_context_t *ctx = &g_context;
 
-	/*pr_debug("Memory migration routine\n");
-	pr_info("Migrated %llu since start", total_migrations);
+	pr_info("Memory migration routine\n");
+	/*pr_info("Migrated %llu since start", total_migrations);
 
 	unsigned long long ts = ktime_get_real_fast_ns();
 	pr_info("dram,%llu,%llu,%llu,%llu,%llu,%llu", dram_migrations[0],
@@ -654,14 +656,20 @@ int ambix_check_memory(void)
 		nvram_migrations[i] = 0;
 	}*/
 
-	mutex_lock(&VM_AREAS_LOCK);
 	refresh_bound_vm_areas();
-	if (list_empty(AMBIX_VM_AREAS)) {
+	read_lock(&my_rwlock);
+
+	if (list_empty(&AMBIX_VM_AREAS)) {
 		pr_debug("No bound processes...\n");
+		read_unlock(&my_rwlock);
+
 		goto release_return_acm;
 	}
 
+	read_unlock(&my_rwlock);
+
 	walk_ranges_usage();
+
 	pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
 	pr_info("Ambix NVRAM Usage: %d\n",
 		get_memory_usage_percent(NVRAM_POOL));
@@ -670,6 +678,8 @@ int ambix_check_memory(void)
 		get_real_memory_usage_per(DRAM_POOL));
 	pr_info("System NVRAM Usage: %d\n",
 		get_real_memory_usage_per(NVRAM_POOL));
+
+	goto release_return_acm;
 
 	if (g_switch_act) {
 		u64 pmm_bw = 0;
@@ -822,7 +832,6 @@ int ambix_check_memory(void)
 	}
 
 release_return_acm:
-	mutex_unlock(&VM_AREAS_LOCK);
 	return n_migrated;
 }
 

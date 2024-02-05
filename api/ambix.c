@@ -107,7 +107,6 @@ int get_mem_info(unsigned long start_addr, mem_info *info)
 	// Open the proc file
 	file = fopen(path, "r");
 	if (file == NULL) {
-		perror("Failed to open proc file");
 		return -1;
 	}
 
@@ -119,7 +118,6 @@ int get_mem_info(unsigned long start_addr, mem_info *info)
 	fclose(file);
 
 	if (result != 3) {
-		fprintf(stderr, "Failed to parse proc file\n");
 		return -1;
 	}
 

@@ -16,7 +16,7 @@
 #include <linux/err.h>
 #include <linux/mm.h>
 #include <linux/rwlock.h>
-
+#include <linux/proc_fs.h>
 
 #include "config.h"
 #include "sys_mem_info.h"
@@ -42,19 +42,25 @@ static unsigned long long total_nvram_usage = 0;
 
 struct proc_dir_entry *proc_dir;
 
-
-
 static int vm_area_mem_info_show(struct seq_file *s, void *private)
 {
-	char *filename = (char *)private;
+	char *filename = s->file->f_path.dentry->d_iname;
 	int pid;
 	unsigned long start_addr;
+	struct vm_area_t *vm_area;
 
-	sscanf(filename, "%d.%ul", pid, start_addr);
+	sscanf(filename, "%d.%lu", &pid, &start_addr);
 	read_lock(&my_rwlock);
-	vm_area = get_vm_area(pid, start_addr);
+	vm_area = ambix_get_vm_area(pid, start_addr);
 
-	seq_printf(s, "fast_tier_usage, slow_tier_usage\n%d, %lu\n",
+	if (!vm_area) {
+		seq_printf(s, "fast_tier_usage, slow_tier_usage\n0, 0\n");
+		read_unlock(&my_rwlock);
+
+		return 0;
+	}
+
+	seq_printf(s, "fast_tier_usage, slow_tier_usage\n%lu, %lu\n",
 		   vm_area->fast_tier_bytes, vm_area->slow_tier_bytes);
 	read_unlock(&my_rwlock);
 
@@ -63,60 +69,31 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 
 static int vm_area_proc_open(struct inode *node, struct file *file)
 {
-	char *filename = PDE_DATA(inode);
-	return single_open(file, kmod_show, (void *)filename);
+	return single_open(file, vm_area_mem_info_show, NULL);
 }
 
-
-static const struct kmod_proc_ops = {
+static const struct proc_ops kmod_proc_ops = {
 	.proc_open = vm_area_proc_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 };
 
-
-static int create_proc_file(int pid, unsigned long start_addr)
+int create_proc_file(int pid, unsigned long start_addr)
 {
 	char filename[128];
+	struct proc_dir_entry *entry;
 	// ! check function return
-	snprintf(filename, 128, "%d.%ul", pid, start_addr);
+	snprintf(filename, 128, "%d.%lu", pid, start_addr);
 
-	proc_entry = proc_create(filename, 0666, proc_dir, &proc_fops);
-	if (!proc_entry) {
+	entry = proc_create(filename, 0666, proc_dir, &kmod_proc_ops);
+
+	if (!entry) {
 		return -ENOMEM;
 	}
 
 	return 0;
 }
-
-static int write_int_to_proc(const char *filename, int value)
-{
-	char value_str[MAX_INT_SIZE];
-	int length;
-
-	// Check if proc file exists, create if not
-	proc_entry = proc_create(filename, 0666, proc_dir, &proc_fops);
-	if (!proc_entry) {
-		return -ENOMEM;
-	}
-
-	// Convert integer to string
-	length = snprintf(value_str, MAX_INT_SIZE, "%d", value);
-	if (length <= 0) {
-		proc_remove(proc_entry);
-		return -EINVAL;
-	}
-
-	// Simulate a write operation
-	procfile_write(NULL, value_str, length, NULL);
-
-	// In a real scenario, you may want to remove the proc_entry after writing
-	// proc_remove(proc_entry);
-
-	return 0;
-}
-
 
 int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 {
@@ -148,25 +125,29 @@ static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 	if (!pte_present(*ptep))
 		return 0;
 
-	if (addr > current_vm_global->end_addr) {
-		if (current_vm_global->next) {
-			current_vm_global->dram_usage = 0;
-			current_vm_global->nvram_usage = 0;
-			current_vm_global = current_vm_global->next;
-		} else
+	if (current_vm_global && addr > current_vm_global->end_addr) {
+		struct vm_area_t *next_vm_area =
+			list_next_entry(current_vm_global, node);
+
+		if (&next_vm_area->node != &AMBIX_VM_AREAS) {
+			current_vm_global = next_vm_area;
+			current_vm_global->fast_tier_bytes = 0;
+			current_vm_global->slow_tier_bytes = 0;
+		} else {
 			current_vm_global = NULL;
+		}
 	}
 
-	if (current_vm_global && current_vm_global->start_addr >= addr)
+	if (current_vm_global && current_vm_global->start_addr <= addr)
 		managed_by_ambix = 1;
 
 	if (is_page_in_pool(*ptep, DRAM_POOL)) {
 		if (managed_by_ambix)
-			current_vm_global->dram_usage += PAGE_SIZE;
+			current_vm_global->fast_tier_bytes += PAGE_SIZE;
 		total_dram_usage += PAGE_SIZE;
 	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
 		if (managed_by_ambix)
-			current_vm_global->nvram_usage += PAGE_SIZE;
+			current_vm_global->slow_tier_bytes += PAGE_SIZE;
 		total_nvram_usage += PAGE_SIZE;
 	}
 
@@ -178,8 +159,7 @@ void walk_ranges_usage(void)
 	struct task_struct *t = NULL;
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_callback_usage };
 	struct mm_struct *mm = NULL;
-	struct vm_area_t *current_vm;
-	struct hlist_node *tmp;
+	struct vm_area_t *current_vm, *tmp;
 	unsigned int aux_pid = -1;
 
 	total_dram_usage = 0;
@@ -190,8 +170,15 @@ void walk_ranges_usage(void)
 	read_lock(&my_rwlock);
 
 	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
-		if (aux_pid == pid_nr(current_vm->__pid))
+		if (aux_pid == pid_nr(current_vm->__pid)) {
+			printk(KERN_INFO
+			       "pid: %d, start_addr: %lu, fast: %lu, slow: %lu\n",
+			       pid_nr(current_vm->__pid),
+			       current_vm->start_addr,
+			       current_vm->fast_tier_bytes,
+			       current_vm->slow_tier_bytes);
 			continue;
+		}
 
 		aux_pid = pid_nr(current_vm->__pid);
 
@@ -209,12 +196,20 @@ void walk_ranges_usage(void)
 			continue;
 		}
 
-		current_vm_global->dram_usage = 0;
-		current_vm_global->nvram_usage = 0;
+		current_vm_global = current_vm;
+
+		current_vm_global->fast_tier_bytes = 0;
+		current_vm_global->slow_tier_bytes = 0;
 
 		mmap_read_lock(mm);
 		g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
 		mmap_read_unlock(mm);
+
+		printk(KERN_INFO
+		       "pid: %d, start_addr: %lu, fast: %lu, slow: %lu\n",
+		       pid_nr(current_vm->__pid), current_vm->start_addr,
+		       current_vm->fast_tier_bytes,
+		       current_vm->slow_tier_bytes);
 
 		mmput(mm);
 		mm = NULL;
