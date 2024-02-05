@@ -4,7 +4,7 @@
 
 int write_procfs(char *command)
 {
-	FILE *f = fopen("/proc/ambix", "w");
+	FILE *f = fopen("/proc/ambix/objects", "w");
 
 	if (!f)
 		goto fail_return;
@@ -94,6 +94,26 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end)
 	snprintf(buffer, 1023, "unbind_range_pid %d %lx %lx", pid, start, end);
 	return write_procfs(buffer);
 }
+
+
+
+
+int bind_obj_mem_tracking(int pid, unsigned long start, unsigned long end)
+{
+	char buffer[1024];
+	snprintf(buffer, 1023, "bind_obj_mem_tracking %d %lx %lx", pid, start, end);
+	return write_procfs(buffer);
+}
+
+
+int unbind_obj_mem_tracking(int pid, unsigned long start, unsigned long end)
+{
+	char buffer[1024];
+	snprintf(buffer, 1023, "unbind_obj_mem_tracking %d %lx %lx", pid, start, end);
+	return write_procfs(buffer);
+}
+
+
 
 int get_mem_info(unsigned long start_addr, mem_info *info)
 {

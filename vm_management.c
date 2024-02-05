@@ -106,7 +106,7 @@ out:
 }
 
 int ambix_bind_pid(const pid_t nr) {
-  return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0, 0);
+  return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0, 1);
 }
 
 int ambix_unbind_pid(const pid_t pid) {

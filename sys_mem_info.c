@@ -34,8 +34,8 @@ const int NVRAM_NODES[] = _NVRAM_NODES;
 const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
 
-static unsigned long long dram_usage = 0;
-static unsigned long long nvram_usage = 0;
+static unsigned long long ambix_dram_usage = 0;
+static unsigned long long ambix_nvram_usage = 0;
 
 static unsigned long long total_dram_usage = 0;
 static unsigned long long total_nvram_usage = 0;
@@ -142,12 +142,16 @@ static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 		managed_by_ambix = 1;
 
 	if (is_page_in_pool(*ptep, DRAM_POOL)) {
-		if (managed_by_ambix)
+		if (managed_by_ambix) {
 			current_vm_global->fast_tier_bytes += PAGE_SIZE;
+			ambix_dram_usage += PAGE_SIZE;
+		}
 		total_dram_usage += PAGE_SIZE;
 	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
-		if (managed_by_ambix)
+		if (managed_by_ambix) {
 			current_vm_global->slow_tier_bytes += PAGE_SIZE;
+			ambix_nvram_usage += PAGE_SIZE;
+		}
 		total_nvram_usage += PAGE_SIZE;
 	}
 
@@ -168,6 +172,12 @@ void walk_ranges_usage(void)
 	pr_info("Walking page ranges to get memory usage");
 
 	read_lock(&my_rwlock);
+
+	ambix_dram_usage = 0;
+	ambix_nvram_usage = 0;
+
+	total_dram_usage = 0;
+	total_nvram_usage = 0;
 
 	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
 		if (aux_pid == pid_nr(current_vm->__pid)) {
@@ -285,7 +295,7 @@ u32 get_real_memory_usage_per(enum pool_t pool)
 u32 get_memory_usage_percent(enum pool_t pool)
 {
 	int i = 0;
-	u64 totalram = 0, freeram = 0;
+	u64 totalram = 0, usedram = 0;
 	const int *nodes = get_pool_nodes(pool);
 	size_t size = get_pool_size(pool);
 	u32 ratio;
@@ -299,24 +309,30 @@ u32 get_memory_usage_percent(enum pool_t pool)
 	for (i = 0; i < size; ++i) {
 		struct sysinfo inf;
 		g_si_meminfo_node(&inf, nodes[i]);
-		totalram += inf.totalram;
+		totalram += inf.totalram * inf.mem_unit;
 		// freeram += inf.freeram;
 	}
 
-	mutex_lock(&USAGE_mtx);
+	write_lock(&my_rwlock);
+
 	if (pool == DRAM_POOL) {
-		freeram = K(totalram) - dram_usage;
+		usedram = ambix_dram_usage;
 	} else {
-		freeram = K(totalram) - nvram_usage;
+		usedram = ambix_nvram_usage;
 	}
-	mutex_unlock(&USAGE_mtx);
+	write_unlock(&my_rwlock);
+
+	pr_info("total %lu, used %lu\n", totalram, usedram);
 
 	// pr_info("K(totalram) - freeram = %llu", (K(totalram) - freeram));
 	// pr_info("((K(totalram) - freeram) * 100 / K(totalram)) = %llu",
 	// ((K(totalram) - freeram) * 100 / K(totalram)));
 
 	// integer division so we need to scale the values so the quotient != 0
-	return ((K(totalram) - freeram) * 100 / K(totalram)) * 100 / ratio;
+	if (ratio == 0)
+		return 0;
+
+	return ((usedram * 100 )/ (totalram))  / ratio;
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)

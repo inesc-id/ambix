@@ -112,7 +112,7 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
               current->pid, start, end);
       rc = -EINVAL;
     } else if (ambix_bind_pid_constrained(current->pid, start, end,
-                                          allocation_site, size, 1)) {
+                                          allocation_site, size, 0)) {
       pr_crit("Couldn't bind in bind_range");
       rc = -EINVAL;
     }
