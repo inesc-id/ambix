@@ -181,16 +181,16 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
 		pr_info("unbind,%d,%llu", current->pid, ts);
 	} else if (!strncmp(buf, "unbind_range_monitoring_pid", 27)) {
 		unsigned long start, end;
-		int retval;
-		retval = sscanf(buf, "unbind_range_monitoring_pid %lx %lx",
-				&start, &end);
-		if (retval != 2) {
+		int retval, pid;
+		retval = sscanf(buf, "unbind_range_monitoring_pid %d %lx %lx",
+				&pid, &start, &end);
+		if (retval != 3) {
 			pr_crit("Couldn't unbind in unbind_range");
 		}
-		if (ambix_unbind_range_pid(current->pid, start, end)) {
+		if (ambix_unbind_range_pid(pid, start, end)) {
 			rc = -EINVAL;
 		}
-		pr_info("unbind,%d,%llu", current->pid, ts);
+		pr_info("unbind,%d,%llu", pid, ts);
 
 	} else if (!strncmp(buf, "unbind_range_pid", 12)) {
 		int pid, retval;
@@ -376,10 +376,13 @@ void cleanup(void)
 	write_lock(&my_rwlock);
 
 	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
-		char filename[128];
-		snprintf(filename, 128, "%d.%lu", pid_nr(current_vm->__pid),
-			 current_vm->start_addr);
-		remove_proc_entry(filename, proc_dir);
+		if (!current_vm->migrate_pages) {
+			char filename[128];
+			snprintf(filename, 128, "%d.%lu",
+				 pid_nr(current_vm->__pid),
+				 current_vm->start_addr);
+			remove_proc_entry(filename, proc_dir);
+		}
 
 		put_pid(current_vm->__pid);
 		list_del(&current_vm->node);

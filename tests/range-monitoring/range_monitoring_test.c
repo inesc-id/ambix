@@ -1,4 +1,4 @@
-#include "ambix.h"
+#include "api/ambix.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -28,11 +28,8 @@ void *map_numa_memory(size_t size, int numa_node)
 void simulate_memory_access(void *addr, size_t size, int access_percentage)
 {
 	volatile char *ptr = addr;
-	for (size_t i = 0; i < size; i += (size / 100)) {
-		if (i % 100 < (size_t)access_percentage) {
-			ptr[i] = (ptr[i] + 1) %
-				 256; // Simple write to simulate access
-		}
+	for (size_t i = 0; i < size / 4; i += 256) {
+		ptr[i] = 42;
 	}
 }
 
@@ -78,17 +75,26 @@ int main()
 				       50); // 50% access
 	}
 
+	for (;;) {
+		getchar();
+		break;
+	}
+
 	// Get and print memory info for each range
 	for (int i = 0; i < NUM_RANGES; i++) {
 		if (get_object_mem_info((unsigned long)dram_ranges[i], &info) ==
 		    0) {
 			printf("DRAM Range %d: ", i);
 			print_mem_info(&info);
+		} else {
+			printf("error openning file\n");
 		}
 		if (get_object_mem_info((unsigned long)optane_ranges[i],
 					&info) == 0) {
 			printf("Optane Range %d: ", i);
 			print_mem_info(&info);
+		} else {
+			printf("error openning file\n");
 		}
 	}
 
@@ -104,8 +110,13 @@ int main()
 	unbind_range_monitoring((unsigned long)optane_ranges[0],
 				(unsigned long)optane_ranges[0] + RANGE_SIZE);
 
+		for (;;) {
+		getchar();
+		break;
+	}
+
 	// Verify remaining ranges and total program memory info again
-	for (int i = 1; i < NUM_RANGES;
+	for (int i = 0; i < NUM_RANGES;
 	     i++) { // Start from 1 since 0 was unbound
 		if (get_object_mem_info((unsigned long)dram_ranges[i], &info) ==
 		    0) {

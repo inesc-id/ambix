@@ -33,6 +33,6 @@ int unbind_range_monitoring(unsigned long start, unsigned long end);
 int unbind_range_monitoring_pid(int pid, unsigned long start,
 				unsigned long end);
 
-int get_object_mem_info(unsigned long start_addr, mem_info *info);
+int get_object_mem_info(unsigned long start_addr, struct mem_info *info);
 int get_program_mem_info(struct mem_info *info);
 #endif

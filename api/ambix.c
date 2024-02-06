@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
 #include "ambix.h"
 
 int write_procfs(char *command)
@@ -126,7 +128,7 @@ int unbind_range_monitoring(unsigned long start, unsigned long end)
 int unbind_range_monitoring_pid(int pid, unsigned long start, unsigned long end)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range_monitoring %d %lx %lx", pid, start,
+	snprintf(buffer, 1023, "unbind_range_monitoring_pid %d %lx %lx", pid, start,
 		 end);
 	return write_procfs(buffer);
 }
@@ -138,7 +140,7 @@ int get_object_mem_info(unsigned long start_addr, struct mem_info *info)
 	int result;
 
 	// Create the path to the proc file
-	snprintf(path, sizeof(path), "/proc/ambix/%lu", start_addr);
+	snprintf(path, sizeof(path), "/proc/ambix/%d.%lu", getpid(), start_addr);
 
 	// Open the proc file
 	file = fopen(path, "r");
