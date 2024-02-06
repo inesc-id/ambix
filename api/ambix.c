@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "ambix.h"
 
 int write_procfs(char *command)
 {
@@ -95,25 +96,40 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end)
 	return write_procfs(buffer);
 }
 
+/************************ Memory Monitoring Only ******************************/
 
-
-
-int bind_obj_mem_tracking(int pid, unsigned long start, unsigned long end)
+int bind_range_monitoring(unsigned long start, unsigned long end,
+			  unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_obj_mem_tracking %d %lx %lx", pid, start, end);
+	snprintf(buffer, 1023, "bind_range_monitoring %lx %lx %lx", start, end,
+		 size);
 	return write_procfs(buffer);
 }
 
-
-int unbind_obj_mem_tracking(int pid, unsigned long start, unsigned long end)
+int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
+			      unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_obj_mem_tracking %d %lx %lx", pid, start, end);
+	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx", pid,
+		 start, end, size);
 	return write_procfs(buffer);
 }
 
+int unbind_range_monitoring(unsigned long start, unsigned long end)
+{
+	char buffer[1024];
+	snprintf(buffer, 1023, "unbind_range_monitoring %lx %lx", start, end);
+	return write_procfs(buffer);
+}
 
+int unbind_range_monitoring_pid(int pid, unsigned long start, unsigned long end)
+{
+	char buffer[1024];
+	snprintf(buffer, 1023, "unbind_range_monitoring %d %lx %lx", pid, start,
+		 end);
+	return write_procfs(buffer);
+}
 
 int get_mem_info(unsigned long start_addr, mem_info *info)
 {

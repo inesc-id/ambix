@@ -22,4 +22,13 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end);
 int enable(void);
 int disable(void);
 int get_mem_info(unsigned long start_addr, mem_info *info);
+
+// Monitoring only
+int bind_range_monitoring(unsigned long start, unsigned long end,
+			  unsigned long size);
+int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
+			      unsigned long size);
+int unbind_range_monitoring(unsigned long start, unsigned long end);
+int unbind_range_monitoring_pid(int pid, unsigned long start,
+				unsigned long end);
 #endif
