@@ -54,14 +54,14 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 	vm_area = ambix_get_vm_area(pid, start_addr);
 
 	if (!vm_area) {
-		seq_printf(s, "fast_tier_usage, slow_tier_usage\n0, 0\n");
+		seq_printf(s, "fast_tier_usage, slow_tier_usage, allocation_site\n-1, -1, -1\n");
 		read_unlock(&my_rwlock);
 
 		return 0;
 	}
 
-	seq_printf(s, "fast_tier_usage, slow_tier_usage\n%lu, %lu\n",
-		   vm_area->fast_tier_bytes, vm_area->slow_tier_bytes);
+	seq_printf(s, "fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, %lu\n",
+		   vm_area->fast_tier_bytes, vm_area->slow_tier_bytes, vm_area->allocation_site);
 	read_unlock(&my_rwlock);
 
 	return 0;

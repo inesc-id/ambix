@@ -391,6 +391,10 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 				list_first_entry(&AMBIX_VM_AREAS,
 						 struct vm_area_t, node);
 
+	end_vm = end_vm ? end_vm :
+				list_first_entry(&AMBIX_VM_AREAS,
+						 struct vm_area_t, node);
+
 loop_back:
 
 	list_for_each_entry_from (current_vm, &AMBIX_VM_AREAS, node) {
@@ -666,8 +670,8 @@ int ambix_check_memory(void)
 	struct pte_callback_context_t *ctx = &g_context;
 
 	pr_info("Memory migration routine\n");
-	/*pr_info("Migrated %llu since start", total_migrations);
-
+	pr_info("Migrated %llu since start", total_migrations);
+	/*
 	unsigned long long ts = ktime_get_real_fast_ns();
 	pr_info("dram,%llu,%llu,%llu,%llu,%llu,%llu", dram_migrations[0],
 		dram_migrations[1], dram_migrations[2], dram_migrations[3],
@@ -692,8 +696,10 @@ int ambix_check_memory(void)
 	}
 
 	read_unlock(&my_rwlock);
-
+	u64 track_start = tsc_rd();
 	walk_ranges_usage();
+
+	pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
 
 	pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
 	pr_info("Ambix NVRAM Usage: %d\n",
