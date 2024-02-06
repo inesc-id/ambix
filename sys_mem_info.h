@@ -32,6 +32,8 @@ u32 get_memory_usage_percent(enum pool_t pool);
 
 u64 get_memory_total_ratio(enum pool_t pool);
 
+unsigned long long get_memory_usage_bytes(enum pool_t pool);
+
 u64 get_memory_total(enum pool_t pool);
 
 int create_proc_file(int pid, unsigned long start_addr);

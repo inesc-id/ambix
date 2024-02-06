@@ -42,7 +42,7 @@ MODULE_AUTHOR("INESC-ID");
 MODULE_DESCRIPTION("Ambix - Bandwidth-aware page replacement");
 MODULE_VERSION("2.2.0");
 
-static bool g_show_aggregates = true;
+//static bool g_show_aggregates = true;
 static bool g_perf_enabled = true;
 
 /**
@@ -51,34 +51,12 @@ static bool g_perf_enabled = true;
  */
 static int kmod_show(struct seq_file *s, void *private)
 {
-	if (g_show_aggregates) {
-		const u64 pmm_reads = perf_counters_pmm_reads(),
-			  pmm_writes = perf_counters_pmm_writes(),
-			  ddr_reads = perf_counters_ddr_reads(),
-			  ddr_writes = perf_counters_ddr_writes();
-		seq_printf(s,
-			   "PMM READS: %lld Mb/s\n"
-			   "PMM WRITES: %lld Mb/s\n"
-			   "DDR READS: %lld Mb/s\n"
-			   "DDR WRITES: %lld Mb/s\n"
-			   "PMM BW: %lld Mb/s\n"
-			   "DDR BW: %lld Mb/s\n",
-			   pmm_reads, pmm_writes, ddr_reads, ddr_writes,
-			   pmm_reads + pmm_writes, ddr_reads + ddr_writes);
-	} else {
-		size_t i;
-		for (i = 0; i < EVENTs_size; ++i) {
-			u64 value, time;
-			bool enabled =
-				perf_counters_read_change(i, &value, &time);
-			struct counter_t *const info = perf_counters_info(i);
-			seq_printf(s, "%ld:%s e:%s; dv:%lld %s; dt:%lld;\n", i,
-				   info->name, enabled ? "T" : "F",
-				   value / jiffies_to_sec(time) * info->mult /
-					   info->fact,
-				   info->unit, jiffies_to_sec(time));
-		}
-	}
+	seq_printf(
+		s,
+		"fast_tier_usage, slow_tier_usage, allocation_site\n%llu, %llu, -1\n",
+		get_memory_usage_bytes(DRAM_POOL),
+		get_memory_usage_bytes(NVRAM_POOL));
+
 	return 0;
 }
 
@@ -116,11 +94,51 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
 			rc = -EINVAL;
 		} else if (ambix_bind_pid_constrained(current->pid, start, end,
 						      allocation_site, size,
-						      0)) {
+						      1)) {
 			pr_crit("Couldn't bind in bind_range");
 			rc = -EINVAL;
 		}
 		pr_info("bind,%d,%llu", current->pid, ts);
+	} else if (!strncmp(buf, "bind_range_monitoring", 21)) {
+		unsigned long start, end, allocation_site, size;
+		int retval =
+			sscanf(buf, "bind_range_monitoring %lx %lx %lx %lx",
+			       &start, &end, &allocation_site, &size);
+		pr_info("retval = %d start = %li end = %li", retval,
+			*(long *)&start, *(long *)&end);
+		if (retval != 4) {
+			pr_crit("Couldn't parse bind_range arguments pid=%d start=%lu "
+				"end=%lu",
+				current->pid, start, end);
+			rc = -EINVAL;
+		} else if (ambix_bind_pid_constrained(current->pid, start, end,
+						      allocation_site, size,
+						      0)) {
+			pr_crit("Couldn't bind in bind_range");
+			rc = -EINVAL;
+		}
+		pr_info("bind_monitor_only,%d,%llu", current->pid, ts);
+
+	} else if (!strncmp(buf, "bind_range_monitoring_pid", 25)) {
+		int pid, retval;
+		unsigned long start, end, allocation_site, size;
+		retval = sscanf(buf,
+				"bind_range_monitoring_pid %d %lx %lx %lx %lx",
+				&pid, &start, &end, &allocation_site, &size);
+		pr_info("retval = %d start = %li end = %li", retval,
+			*(long *)&start, *(long *)&end);
+		if (retval != 4) {
+			pr_crit("Couldn't parse bind_range arguments pid=%d start=%lu "
+				"end=%lu",
+				current->pid, start, end);
+			rc = -EINVAL;
+		} else if (ambix_bind_pid_constrained(
+				   pid, start, end, allocation_site, size, 0)) {
+			pr_crit("Couldn't bind in bind_range");
+			rc = -EINVAL;
+		}
+		pr_info("bind_monitor_only,%d,%llu", current->pid, ts);
+
 	} else if (!strncmp(buf, "bind_range_pid", 14)) {
 		int pid, retval;
 		unsigned long start, end, allocation_site, size;
@@ -149,10 +167,11 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
 			rc = -EINVAL;
 		}
 		pr_info("unbind,%d,%llu", current->pid, ts);
-	} else if (!strncmp(buf, "unbind_range", 12)) {
+	} else if (!strncmp(buf, "unbind_range_monitoring", 23)) {
 		unsigned long start, end;
 		int retval;
-		retval = sscanf(buf, "unbind_range %lx %lx", &start, &end);
+		retval = sscanf(buf, "unbind_range_monitoring %lx %lx", &start,
+				&end);
 		if (retval != 2) {
 			pr_crit("Couldn't unbind in unbind_range");
 		}
@@ -160,6 +179,19 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
 			rc = -EINVAL;
 		}
 		pr_info("unbind,%d,%llu", current->pid, ts);
+	} else if (!strncmp(buf, "unbind_range_monitoring_pid", 27)) {
+		unsigned long start, end;
+		int retval;
+		retval = sscanf(buf, "unbind_range_monitoring_pid %lx %lx",
+				&start, &end);
+		if (retval != 2) {
+			pr_crit("Couldn't unbind in unbind_range");
+		}
+		if (ambix_unbind_range_pid(current->pid, start, end)) {
+			rc = -EINVAL;
+		}
+		pr_info("unbind,%d,%llu", current->pid, ts);
+
 	} else if (!strncmp(buf, "unbind_range_pid", 12)) {
 		int pid, retval;
 		unsigned long start, end;

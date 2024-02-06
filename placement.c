@@ -666,7 +666,7 @@ static u32 kmod_migrate_pages(struct pte_callback_context_t *ctx,
 int ambix_check_memory(void)
 {
 	u32 n_migrated = 0;
-	int i = 0;
+	//int i = 0;
 	struct pte_callback_context_t *ctx = &g_context;
 
 	pr_info("Memory migration routine\n");
@@ -696,10 +696,10 @@ int ambix_check_memory(void)
 	}
 
 	read_unlock(&my_rwlock);
-	u64 track_start = tsc_rd();
+	//u64 track_start = tsc_rd();
 	walk_ranges_usage();
 
-	pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
+	//pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
 
 	pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
 	pr_info("Ambix NVRAM Usage: %d\n",

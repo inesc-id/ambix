@@ -99,20 +99,20 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end)
 /************************ Memory Monitoring Only ******************************/
 
 int bind_range_monitoring(unsigned long start, unsigned long end,
-			  unsigned long size)
+			  unsigned long allocation_site, unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_monitoring %lx %lx %lx", start, end,
-		 size);
+	snprintf(buffer, 1023, "bind_range_monitoring %lx %lx %lx %lx", start,
+		 end, allocation_site, size);
 	return write_procfs(buffer);
 }
 
 int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
-			      unsigned long size)
+			      unsigned long allocation_site, unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx", pid,
-		 start, end, size);
+	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx %lx", pid,
+		 start, end, allocation_site, size);
 	return write_procfs(buffer);
 }
 
@@ -131,14 +131,14 @@ int unbind_range_monitoring_pid(int pid, unsigned long start, unsigned long end)
 	return write_procfs(buffer);
 }
 
-int get_mem_info(unsigned long start_addr, mem_info *info)
+int get_object_mem_info(unsigned long start_addr, struct mem_info *info)
 {
 	char path[256];
 	FILE *file;
 	int result;
 
 	// Create the path to the proc file
-	snprintf(path, sizeof(path), "/proc/%lu", start_addr);
+	snprintf(path, sizeof(path), "/proc/ambix/%lu", start_addr);
 
 	// Open the proc file
 	file = fopen(path, "r");
@@ -147,7 +147,39 @@ int get_mem_info(unsigned long start_addr, mem_info *info)
 	}
 
 	// Read the proc file
-	result = fscanf(file, "%lu, %lu, %lu", &info->slow_tier_usage_bytes,
+	result = fscanf(file, "%*[^\n]\n%lu, %lu, %lu",
+			&info->slow_tier_usage_bytes,
+			&info->fast_tier_usage_bytes, &info->allocation_site);
+
+	// Close the proc file
+	fclose(file);
+
+	if (result != 3) {
+		return -1;
+	}
+
+	return 0;
+}
+
+
+int get_program_mem_info(struct mem_info *info)
+{
+	char path[256];
+	FILE *file;
+	int result;
+
+	// Create the path to the proc file
+	snprintf(path, sizeof(path), "/proc/ambix/objects");
+
+	// Open the proc file
+	file = fopen(path, "r");
+	if (file == NULL) {
+		return -1;
+	}
+
+	// Read the proc file
+	result = fscanf(file, "%*[^\n]\n%lu, %lu, %lu",
+			&info->slow_tier_usage_bytes,
 			&info->fast_tier_usage_bytes, &info->allocation_site);
 
 	// Close the proc file

@@ -54,14 +54,19 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 	vm_area = ambix_get_vm_area(pid, start_addr);
 
 	if (!vm_area) {
-		seq_printf(s, "fast_tier_usage, slow_tier_usage, allocation_site\n-1, -1, -1\n");
+		seq_printf(
+			s,
+			"fast_tier_usage, slow_tier_usage, allocation_site\n-1, -1, -1\n");
 		read_unlock(&my_rwlock);
 
 		return 0;
 	}
 
-	seq_printf(s, "fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, %lu\n",
-		   vm_area->fast_tier_bytes, vm_area->slow_tier_bytes, vm_area->allocation_site);
+	seq_printf(
+		s,
+		"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, %lu\n",
+		vm_area->fast_tier_bytes, vm_area->slow_tier_bytes,
+		vm_area->allocation_site);
 	read_unlock(&my_rwlock);
 
 	return 0;
@@ -328,6 +333,21 @@ u32 get_memory_usage_percent(enum pool_t pool)
 		return 0;
 
 	return ((usedram * 100) / (totalram)) * (100 / ratio);
+}
+
+unsigned long long get_memory_usage_bytes(enum pool_t pool)
+{
+	unsigned long long usedmem;
+	write_lock(&my_rwlock);
+
+	if (pool == DRAM_POOL) {
+		usedmem = ambix_dram_usage;
+	} else {
+		usedmem = ambix_nvram_usage;
+	}
+	write_unlock(&my_rwlock);
+
+	return usedmem;
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)
