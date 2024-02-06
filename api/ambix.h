@@ -21,15 +21,18 @@ int unbind_range(unsigned long start, unsigned long end);
 int unbind_range_pid(int pid, unsigned long start, unsigned long end);
 int enable(void);
 int disable(void);
-int get_object_mem_info(unsigned long start_addr, mem_info *info);
 
 // Monitoring only
 int bind_range_monitoring(unsigned long start, unsigned long end,
-			  unsigned long allocation_site, unsigned long size)
+			  unsigned long allocation_site, unsigned long size);
 int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
-			      unsigned long allocation_site, unsigned long size);
+			      unsigned long allocation_site,
+			      unsigned long size);
 
 int unbind_range_monitoring(unsigned long start, unsigned long end);
 int unbind_range_monitoring_pid(int pid, unsigned long start,
 				unsigned long end);
+
+int get_object_mem_info(unsigned long start_addr, mem_info *info);
+int get_program_mem_info(struct mem_info *info);
 #endif

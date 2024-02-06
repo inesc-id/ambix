@@ -111,8 +111,8 @@ int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
 			      unsigned long allocation_site, unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx %lx", pid,
-		 start, end, allocation_site, size);
+	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx %lx",
+		 pid, start, end, allocation_site, size);
 	return write_procfs(buffer);
 }
 
@@ -160,7 +160,6 @@ int get_object_mem_info(unsigned long start_addr, struct mem_info *info)
 
 	return 0;
 }
-
 
 int get_program_mem_info(struct mem_info *info)
 {
