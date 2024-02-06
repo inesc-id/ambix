@@ -23,6 +23,7 @@ static u32 IMCs[] = { 13, 14, 15, 16, 17, 18 };
 static size_t IMCs_size = ARRAY_SIZE(IMCs);
 
 // event numbers obtained via perf list --details
+// Full event ist in https://github.com/intel/perfmon/tree/main
 static struct counter_t COUNTERs[] = {
 	{ .event = 0xe3,
 	  .mult = 64,
