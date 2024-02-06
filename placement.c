@@ -329,6 +329,9 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 
 	ctx->curr_pid = pid_p;
 
+	pr_info("pid: %d start: %lu end:  %lu\n", pid_nr(pid_p), start_addr,
+		end_addr);
+
 	t = get_pid_task(pid_p, PIDTYPE_PID);
 	if (!t)
 		return 0;
@@ -360,13 +363,19 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 	return 1;
 }
 
+#define list_for_each_entry_safe_circular(pos, n, head, member)                \
+	for (pos = list_first_entry(head, typeof(*pos), member),               \
+	    n = list_next_entry(pos, member);                                  \
+	     !list_entry_is_head(pos, head, member);                           \
+	     pos = n, n = list_next_entry(n, member))
+
 struct vm_area_walk_t
 walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 			   unsigned long end_addr,
 			   pte_entry_handler_t pte_handler,
 			   struct pte_callback_context_t *ctx)
 {
-	struct vm_area_t *start_vm, *current_vm, *tmp;
+	struct vm_area_t *start_vm, *current_vm, *end_vm;
 	int walk_count = 0;
 	unsigned long left, right;
 	struct vm_area_walk_t ret;
@@ -376,19 +385,24 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 	read_lock(&my_rwlock);
 
 	start_vm = ambix_get_vm_area(start_pid, start_addr);
+	end_vm = ambix_get_vm_area(end_pid, end_addr);
 
-	struct list_head *start_node =
-		start_vm ? &start_vm->node : &AMBIX_VM_AREAS;
+	current_vm = start_vm ? start_vm :
+				list_first_entry(&AMBIX_VM_AREAS,
+						 struct vm_area_t, node);
 
-	list_for_each_entry_safe (current_vm, tmp, start_node, node) {
+loop_back:
+
+	list_for_each_entry_from (current_vm, &AMBIX_VM_AREAS, node) {
+		pr_info("start: %lu end: %lu migr: %d", current_vm->start_addr,
+			current_vm->end_addr, current_vm->migrate_pages);
 		if (!current_vm->migrate_pages)
 			continue;
 
 		if (walk_count > 0) {
 			left = current_vm->start_addr;
-			right = current_vm->end_addr ?
-					current_vm->allocation_site != end_pid :
-					end_addr;
+			right = current_vm == end_vm ? end_addr :
+						       current_vm->end_addr;
 		} else {
 			left = start_addr;
 			right = current_vm->end_addr;
@@ -396,15 +410,25 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 
 		do_page_walk(current_vm->__pid, left, right, pte_handler, ctx);
 
-		walk_count++;
-
-		//! probably wrong
-		if (ambix_get_vm_area(end_pid, end_addr) == current_vm &&
-		    walk_count > 0)
-			goto out;
+		if (current_vm == end_vm) {
+			if (end_vm != start_vm)
+				goto out;
+			else if (walk_count > 0)
+				goto out;
+		}
 
 		if (ctx->n_found >= ctx->n_to_find)
 			goto out;
+
+		walk_count++;
+
+		struct vm_area_t *pos = list_next_entry(current_vm, node);
+
+		if (list_entry_is_head(pos, &AMBIX_VM_AREAS, node)) {
+			current_vm = list_first_entry(&AMBIX_VM_AREAS,
+						      struct vm_area_t, node);
+			goto loop_back;
+		}
 	}
 
 out:
@@ -587,14 +611,15 @@ static u32 kmod_migrate_pages(struct pte_callback_context_t *ctx,
 	int rc;
 	u32 nr;
 	u64 tsc_start, find_candidates_us;
-	pr_debug("It was requested %d page migrations\n", nr_pages);
+	pr_info("It was requested %d page migrations mode: %d\n", nr_pages,
+		mode);
 
 	tsc_start = tsc_rd();
 	rc = find_candidate_pages(ctx, nr_pages, mode);
 	find_candidates_us = tsc_to_usec(tsc_rd() - tsc_start);
 	if (rc <= 0) {
-		pr_debug("No candidates were found (%lldus)\n",
-			 find_candidates_us);
+		pr_info("No candidates were found (%lldus)\n",
+			find_candidates_us);
 		return 0;
 	}
 

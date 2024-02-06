@@ -166,9 +166,6 @@ void walk_ranges_usage(void)
 	struct vm_area_t *current_vm, *tmp;
 	unsigned int aux_pid = -1;
 
-	total_dram_usage = 0;
-	total_nvram_usage = 0;
-
 	pr_info("Walking page ranges to get memory usage");
 
 	read_lock(&my_rwlock);
@@ -279,12 +276,12 @@ u32 get_real_memory_usage_per(enum pool_t pool)
 	for (i = 0; i < size; ++i) {
 		struct sysinfo inf;
 		g_si_meminfo_node(&inf, nodes[i]);
-		totalram += inf.totalram;
-		freeram += inf.freeram;
+		totalram += inf.totalram * inf.mem_unit;
+		freeram += inf.freeram * inf.mem_unit;
 	}
 
 	// integer division so we need to scale the values so the quotient != 0
-	return (K(totalram - freeram) * 100 / K(totalram));
+	return ((totalram - freeram) * 100) / totalram;
 }
 
 // returns used memory for pool in KiB (times the usage factor)
@@ -322,8 +319,6 @@ u32 get_memory_usage_percent(enum pool_t pool)
 	}
 	write_unlock(&my_rwlock);
 
-	pr_info("total %lu, used %lu\n", totalram, usedram);
-
 	// pr_info("K(totalram) - freeram = %llu", (K(totalram) - freeram));
 	// pr_info("((K(totalram) - freeram) * 100 / K(totalram)) = %llu",
 	// ((K(totalram) - freeram) * 100 / K(totalram)));
@@ -332,7 +327,7 @@ u32 get_memory_usage_percent(enum pool_t pool)
 	if (ratio == 0)
 		return 0;
 
-	return ((usedram * 100 )/ (totalram))  / ratio;
+	return ((usedram * 100) / (totalram)) * (100 / ratio);
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)
