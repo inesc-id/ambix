@@ -176,6 +176,7 @@ int kernel_migrate_pages(struct list_head *pagelist, int node)
 	return err;
 }
 
+// Does migrations in batches per pid
 int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 		 const enum pool_t dst, int priority)
 {
@@ -187,7 +188,7 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 	int err, rc = 0;
 	unsigned long found_addr, addr;
 	pid_t page_pid, last_page_pid = -1;
-	struct pid * vm_area_pid;
+	struct pid *vm_area_pid;
 	struct task_struct *t = NULL;
 	struct mm_struct *mm = NULL;
 
@@ -221,8 +222,7 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 		}
 
 		if (!mm) {
-			t = get_pid_task(vm_area_pid,
-					 PIDTYPE_PID);
+			t = get_pid_task(vm_area_pid, PIDTYPE_PID);
 
 			if (t == NULL) {
 				pr_warn("Migration: Can't resolve struct of task (%d).\n",

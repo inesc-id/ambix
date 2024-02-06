@@ -679,7 +679,6 @@ int ambix_check_memory(void)
 	pr_info("System NVRAM Usage: %d\n",
 		get_real_memory_usage_per(NVRAM_POOL));
 
-
 	if (g_switch_act) {
 		u64 pmm_bw = 0;
 
