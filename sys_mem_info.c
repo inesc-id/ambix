@@ -329,9 +329,9 @@ unsigned long long get_memory_usage_bytes(enum pool_t pool)
 	write_lock(&my_rwlock);
 
 	if (pool == DRAM_POOL) {
-		usedmem = ambix_dram_usage;
+		usedmem = total_dram_usage;
 	} else {
-		usedmem = ambix_nvram_usage;
+		usedmem = total_nvram_usage;
 	}
 	write_unlock(&my_rwlock);
 
