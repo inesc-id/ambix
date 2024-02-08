@@ -23,6 +23,10 @@ int enable(void);
 int disable(void);
 
 // Monitoring only
+
+int bind_monitoring(void);
+int unbind_monitoring(void);
+
 int bind_range_monitoring(unsigned long start, unsigned long end,
 			  unsigned long allocation_site, unsigned long size);
 int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,

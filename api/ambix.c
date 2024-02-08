@@ -67,6 +67,18 @@ int bind_range_pid(int pid, unsigned long start, unsigned long end,
 	return write_procfs(buffer);
 }
 
+
+int unbind_monitoring(void)
+{
+	return write_procfs("unbind_monitoring");
+}
+
+int bind_monitoring(void)
+{
+	return write_procfs("bind_monitoring");
+}
+
+
 int unbind(void)
 {
 	return write_procfs("unbind");

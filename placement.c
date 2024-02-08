@@ -684,7 +684,10 @@ int ambix_check_memory(void)
 		nvram_migrations[i] = 0;
 	}*/
 
+
 	refresh_bound_vm_areas();
+	walk_ranges_usage();
+	
 	read_lock(&my_rwlock);
 
 	if (list_empty(&AMBIX_VM_AREAS)) {
@@ -696,7 +699,7 @@ int ambix_check_memory(void)
 
 	read_unlock(&my_rwlock);
 	//u64 track_start = tsc_rd();
-	walk_ranges_usage();
+	
 
 	//pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
 

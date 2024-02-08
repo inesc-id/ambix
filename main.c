@@ -167,7 +167,17 @@ static ssize_t kmod_proc_write(struct file *file, const char __user *buffer,
 			rc = -EINVAL;
 		}
 		pr_info("unbind,%d,%llu", current->pid, ts);
-	} else if (!strncmp(buf, "unbind_range_monitoring", 23)) {
+	} else if (!strcmp(buf, "bind_monitoring")) {
+		if (ambix_bind_pid_constrained(current->pid, 0, 0, 0, 0, 0)) {
+			rc = -EINVAL;
+		}
+		pr_info("bind,%d,%llu", current->pid, ts);
+	} else if (!strcmp(buf, "unbind_monitoring")) {
+		if (ambix_unbind_range_pid(current->pid, 0, 0)) {
+			rc = -EINVAL;
+		}
+		pr_info("unbind,%d,%llu", current->pid, ts);
+	}  else if (!strncmp(buf, "unbind_range_monitoring", 23)) {
 		unsigned long start, end;
 		int retval;
 		retval = sscanf(buf, "unbind_range_monitoring %lx %lx", &start,
