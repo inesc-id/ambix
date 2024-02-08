@@ -8,7 +8,7 @@
 #include <numa.h>
 #include <errno.h>
 
-#define NUM_RANGES 3
+#define NUM_RANGES 10000
 #define RANGE_SIZE (1024 * 1024) // 1MB
 #define DRAM_NODE 0
 #define OPTANE_NODE 2
@@ -120,11 +120,15 @@ int main()
 		print_mem_info(&info);
 	}
 
-	// Unbind one range from each tier and verify
-	unbind_range_monitoring((unsigned long)dram_ranges[0],
-				(unsigned long)dram_ranges[0] + RANGE_SIZE);
-	unbind_range_monitoring((unsigned long)optane_ranges[0],
-				(unsigned long)optane_ranges[0] + RANGE_SIZE);
+	// Unbind half the ranges from each tier and verify
+	for (int i = 0; i < NUM_RANGES; i = i + 2) {
+		unbind_range_monitoring((unsigned long)dram_ranges[i],
+					(unsigned long)dram_ranges[i] +
+						RANGE_SIZE);
+		unbind_range_monitoring((unsigned long)optane_ranges[i],
+					(unsigned long)optane_ranges[i] +
+						RANGE_SIZE);
+	}
 
 	// Wait for 3 seconds to allow the monitoring thread to update the memory info
 	sleep(3);
