@@ -12,6 +12,7 @@
 #define RANGE_SIZE (1024 * 1024) // 1MB
 #define DRAM_NODE 0
 #define OPTANE_NODE 2
+#define ACCESS_PERCENTAGE 50
 
 // Helper function to map memory and bind to NUMA node
 void *map_numa_memory(size_t size, int numa_node)
@@ -28,8 +29,14 @@ void *map_numa_memory(size_t size, int numa_node)
 void simulate_memory_access(void *addr, size_t size, int access_percentage)
 {
 	volatile char *ptr = addr;
-	for (size_t i = 0; i < size / 4; i += 256) {
-		ptr[i] = 42;
+
+	// Calculate how many pages to access
+	size_t pages = size / 4096;
+	size_t pages_to_access = (pages * access_percentage) / 100;
+
+	// Access the pages
+	for (size_t i = 0; i < pages_to_access; i++) {
+		ptr[i * 4096] = 42;
 	}
 }
 
@@ -70,15 +77,17 @@ int main()
 	// Simulate memory access
 	for (int i = 0; i < NUM_RANGES; i++) {
 		simulate_memory_access(dram_ranges[i], RANGE_SIZE,
-				       50); // 50% access
+				       ACCESS_PERCENTAGE);
 		simulate_memory_access(optane_ranges[i], RANGE_SIZE,
-				       50); // 50% access
+				       ACCESS_PERCENTAGE);
 	}
 
-	for (;;) {
-		getchar();
-		break;
-	}
+	// Wait for 3 seconds to allow the monitoring thread to update the memory info
+	sleep(3);
+
+	// Print how many memory each range should theoretically have used
+	printf("Theoretical Single Range Usage: %d B\n",
+	       RANGE_SIZE * ACCESS_PERCENTAGE / 100);
 
 	// Get and print memory info for each range
 	for (int i = 0; i < NUM_RANGES; i++) {
@@ -98,6 +107,10 @@ int main()
 		}
 	}
 
+	// Print how much memory each tier should theoretically have used
+	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
+	       RANGE_SIZE * NUM_RANGES * ACCESS_PERCENTAGE / 100);
+
 	// Get and print total program memory info
 	if (get_program_mem_info(&info) == 0) {
 		printf("Total Program Memory Info: ");
@@ -110,14 +123,15 @@ int main()
 	unbind_range_monitoring((unsigned long)optane_ranges[0],
 				(unsigned long)optane_ranges[0] + RANGE_SIZE);
 
-		for (;;) {
-		getchar();
-		break;
-	}
+	// Wait for 3 seconds to allow the monitoring thread to update the memory info
+	sleep(3);
+
+	// Print how many memory each range should theoretically have used
+	printf("Theoretical Remaining Single Range Usage: %d B\n",
+	       RANGE_SIZE * ACCESS_PERCENTAGE / 100);
 
 	// Verify remaining ranges and total program memory info again
-	for (int i = 0; i < NUM_RANGES;
-	     i++) { // Start from 1 since 0 was unbound
+	for (int i = 0; i < NUM_RANGES; i++) {
 		if (get_object_mem_info((unsigned long)dram_ranges[i], &info) ==
 		    0) {
 			printf("Remaining DRAM Range %d: ", i);
@@ -130,14 +144,32 @@ int main()
 		}
 	}
 
+	// Print how much memory each tier should theoretically have used
+	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
+	       RANGE_SIZE * (NUM_RANGES - 1) * ACCESS_PERCENTAGE / 100);
+
 	// Check total program memory info again
 	if (get_program_mem_info(&info) == 0) {
 		printf("Remaining Total Program Memory Info: ");
 		print_mem_info(&info);
 	}
 
-	// Error handling test
+	// Try to bind a range with invalid parameters
 	if (bind_range_monitoring(0, 0, 0, 0) != 0) {
+		printf("Error handling test passed: Invalid bind operation failed as expected.\n");
+	}
+
+	// Try to unbind a range that was not bound
+	if (unbind_range_monitoring((unsigned long)dram_ranges[0],
+				    (unsigned long)dram_ranges[0] +
+					    RANGE_SIZE) != 0) {
+		printf("Error handling test passed: Invalid unbind operation failed as expected.\n");
+	}
+
+	// Try to bind a range that was already bound
+	if (bind_range_monitoring((unsigned long)dram_ranges[1],
+				  (unsigned long)dram_ranges[1] + RANGE_SIZE,
+				  DRAM_NODE, RANGE_SIZE) != 0) {
 		printf("Error handling test passed: Invalid bind operation failed as expected.\n");
 	}
 
