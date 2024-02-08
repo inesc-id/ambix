@@ -107,6 +107,9 @@ int main()
 		}
 	}
 
+	// Print numastat information with current process
+	system("numastat -p %d", getpid());
+
 	// Print how much memory each tier should theoretically have used
 	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
 	       RANGE_SIZE * NUM_RANGES * ACCESS_PERCENTAGE / 100);
@@ -143,6 +146,9 @@ int main()
 			print_mem_info(&info);
 		}
 	}
+
+	// Print numastat information with current process
+	system("numastat -p %d", getpid());
 
 	// Print how much memory each tier should theoretically have used
 	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
