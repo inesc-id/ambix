@@ -128,8 +128,8 @@ int unbind_range_monitoring(unsigned long start, unsigned long end)
 int unbind_range_monitoring_pid(int pid, unsigned long start, unsigned long end)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range_monitoring_pid %d %lx %lx", pid, start,
-		 end);
+	snprintf(buffer, 1023, "unbind_range_monitoring_pid %d %lx %lx", pid,
+		 start, end);
 	return write_procfs(buffer);
 }
 
@@ -140,7 +140,8 @@ int get_object_mem_info(unsigned long start_addr, struct mem_info *info)
 	int result;
 
 	// Create the path to the proc file
-	snprintf(path, sizeof(path), "/proc/ambix/%d.%lu", getpid(), start_addr);
+	snprintf(path, sizeof(path), "/proc/ambix/%d.%lu", getpid(),
+		 start_addr);
 
 	// Open the proc file
 	file = fopen(path, "r");
@@ -180,8 +181,8 @@ int get_program_mem_info(struct mem_info *info)
 
 	// Read the proc file
 	result = fscanf(file, "%*[^\n]\n%lu, %lu, %lu",
-			&info->slow_tier_usage_bytes,
-			&info->fast_tier_usage_bytes, &info->allocation_site);
+			&info->fast_tier_usage_bytes,
+			&info->slow_tier_usage_bytes, &info->allocation_site);
 
 	// Close the proc file
 	fclose(file);

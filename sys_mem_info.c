@@ -130,7 +130,7 @@ static int pte_callback_usage(pte_t *ptep, unsigned long addr,
 	if (!pte_present(*ptep))
 		return 0;
 
-	if (current_vm_global && addr > current_vm_global->end_addr) {
+	if (current_vm_global && addr >= current_vm_global->end_addr) {
 		struct vm_area_t *next_vm_area =
 			list_next_entry(current_vm_global, node);
 
@@ -183,12 +183,6 @@ void walk_ranges_usage(void)
 
 	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
 		if (aux_pid == pid_nr(current_vm->__pid)) {
-			printk(KERN_INFO
-			       "pid: %d, start_addr: %lu, fast: %lu, slow: %lu\n",
-			       pid_nr(current_vm->__pid),
-			       current_vm->start_addr,
-			       current_vm->fast_tier_bytes,
-			       current_vm->slow_tier_bytes);
 			continue;
 		}
 
@@ -216,12 +210,6 @@ void walk_ranges_usage(void)
 		mmap_read_lock(mm);
 		g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
 		mmap_read_unlock(mm);
-
-		printk(KERN_INFO
-		       "pid: %d, start_addr: %lu, fast: %lu, slow: %lu\n",
-		       pid_nr(current_vm->__pid), current_vm->start_addr,
-		       current_vm->fast_tier_bytes,
-		       current_vm->slow_tier_bytes);
 
 		mmput(mm);
 		mm = NULL;

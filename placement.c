@@ -329,9 +329,6 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 
 	ctx->curr_pid = pid_p;
 
-	pr_info("pid: %d start: %lu end:  %lu\n", pid_nr(pid_p), start_addr,
-		end_addr);
-
 	t = get_pid_task(pid_p, PIDTYPE_PID);
 	if (!t)
 		return 0;
@@ -343,7 +340,6 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 	}
 
 	do {
-		ctx->walk_iter = 0;
 		mmap_read_lock(mm);
 		g_walk_page_range(mm, start_addr, end_addr, &mem_walk_ops, ctx);
 		mmap_read_unlock(mm);
@@ -384,6 +380,8 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 
 	read_lock(&my_rwlock);
 
+	ctx->walk_iter = 0;
+
 	start_vm = ambix_get_vm_area(start_pid, start_addr);
 	end_vm = ambix_get_vm_area(end_pid, end_addr);
 
@@ -398,8 +396,6 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 loop_back:
 
 	list_for_each_entry_from (current_vm, &AMBIX_VM_AREAS, node) {
-		pr_info("start: %lu end: %lu migr: %d", current_vm->start_addr,
-			current_vm->end_addr, current_vm->migrate_pages);
 		if (!current_vm->migrate_pages)
 			continue;
 
@@ -422,6 +418,9 @@ loop_back:
 		}
 
 		if (ctx->n_found >= ctx->n_to_find)
+			goto out;
+
+		if(ctx->walk_iter == FAST_TIER_WALK_THRESHOLD)
 			goto out;
 
 		walk_count++;
@@ -669,7 +668,7 @@ int ambix_check_memory(void)
 	//int i = 0;
 	struct pte_callback_context_t *ctx = &g_context;
 
-	pr_info("Memory migration routine\n");
+	pr_info("Memory management routine\n");
 	pr_info("Migrated %llu since start", total_migrations);
 	/*
 	unsigned long long ts = ktime_get_real_fast_ns();

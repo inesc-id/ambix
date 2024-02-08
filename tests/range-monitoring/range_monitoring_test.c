@@ -8,7 +8,7 @@
 #include <numa.h>
 #include <errno.h>
 
-#define NUM_RANGES 10000
+#define NUM_RANGES 25000
 #define RANGE_SIZE (1024 * 1024) // 1MB
 #define DRAM_NODE 0
 #define OPTANE_NODE 2
@@ -43,6 +43,7 @@ void simulate_memory_access(void *addr, size_t size, int access_percentage)
 // Print memory info
 void print_mem_info(struct mem_info *info)
 {
+	return;
 	printf("Slow Tier Usage Bytes: %lu, Fast Tier Usage Bytes: %lu, Allocation Site: %lu\n",
 	       info->slow_tier_usage_bytes, info->fast_tier_usage_bytes,
 	       info->allocation_site);
@@ -86,21 +87,21 @@ int main()
 	sleep(3);
 
 	// Print how many memory each range should theoretically have used
-	printf("Theoretical Single Range Usage: %d B\n",
+	printf("Theoretical Single Range Usage: %lu B\n",
 	       RANGE_SIZE * ACCESS_PERCENTAGE / 100);
 
 	// Get and print memory info for each range
 	for (int i = 0; i < NUM_RANGES; i++) {
 		if (get_object_mem_info((unsigned long)dram_ranges[i], &info) ==
 		    0) {
-			printf("DRAM Range %d: ", i);
+			//printf("DRAM Range %d: ", i);
 			print_mem_info(&info);
 		} else {
 			printf("error openning file\n");
 		}
 		if (get_object_mem_info((unsigned long)optane_ranges[i],
 					&info) == 0) {
-			printf("Optane Range %d: ", i);
+			//printf("Optane Range %d: ", i);
 			print_mem_info(&info);
 		} else {
 			printf("error openning file\n");
@@ -108,10 +109,18 @@ int main()
 	}
 
 	// Print numastat information with current process
-	system("numastat -p %d", getpid());
+
+	char buff[256];
+
+	snprintf(buff, 256,"numastat -p %d", getpid());
+
+	system(buff);
+
+
+
 
 	// Print how much memory each tier should theoretically have used
-	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
+	printf("Theoretical Total Program Memory Usage Per Tier: %lu B\n",
 	       RANGE_SIZE * NUM_RANGES * ACCESS_PERCENTAGE / 100);
 
 	// Get and print total program memory info
@@ -119,6 +128,7 @@ int main()
 		printf("Total Program Memory Info: ");
 		print_mem_info(&info);
 	}
+
 
 	// Unbind half the ranges from each tier and verify
 	for (int i = 0; i < NUM_RANGES; i = i + 2) {
@@ -134,7 +144,7 @@ int main()
 	sleep(3);
 
 	// Print how many memory each range should theoretically have used
-	printf("Theoretical Remaining Single Range Usage: %d B\n",
+	printf("Theoretical Remaining Single Range Usage: %lu B\n",
 	       RANGE_SIZE * ACCESS_PERCENTAGE / 100);
 
 	// Verify remaining ranges and total program memory info again
@@ -152,10 +162,10 @@ int main()
 	}
 
 	// Print numastat information with current process
-	system("numastat -p %d", getpid());
+	system(buff);
 
 	// Print how much memory each tier should theoretically have used
-	printf("Theoretical Total Program Memory Usage Per Tier: %d B\n",
+	printf("Theoretical Total Program Memory Usage Per Tier: %lu B\n",
 	       RANGE_SIZE * (NUM_RANGES - 1) * ACCESS_PERCENTAGE / 100);
 
 	// Check total program memory info again

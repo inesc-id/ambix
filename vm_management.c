@@ -219,7 +219,7 @@ struct vm_area_t *ambix_get_vm_area(int pid, unsigned long addr)
 	list_for_each_entry (current_vm, &AMBIX_VM_AREAS, node) {
 		if (pid_nr(current_vm->__pid) == pid &&
 		    current_vm->start_addr <= addr &&
-		    current_vm->end_addr >= addr) {
+		    current_vm->end_addr > addr) {
 			return current_vm;
 		}
 	}
