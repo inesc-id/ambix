@@ -99,6 +99,3 @@ int unbind_range_pid(int pid, unsigned long start, unsigned long end);
 int enable(void);
 int disable(void);
 ```
-
-## Disclaimer
-There is a known bug when a process finishes and doesn't unbind from Ambix. If it is doing a `walk_page_range` or migrating pages it might cause a null pointer dereference.
