@@ -22,6 +22,7 @@ fail_return:
 	errno = -EINVAL;
 	return 1;
 }
+
 int enable(void)
 {
 	return write_procfs("enable");
@@ -32,116 +33,48 @@ int disable(void)
 	return write_procfs("disable");
 }
 
-int bind(void)
-{
-	return write_procfs("bind");
-}
-
 int bind_proc_(void)
 {
-	return bind();
+	return bind(0, 1);
 }
 
-int bind_pid(int pid)
+int bind(int pid, int migrations_enabled)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_pid %d", pid);
+	snprintf(buffer, 1023, "bind %d %d", pid, migrations_enabled);
 	return write_procfs(buffer);
 }
 
-int bind_range(unsigned long start, unsigned long end,
-	       unsigned long allocation_site, unsigned long size)
+int unbind(int pid)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range %lx %lx %lx %lx", start, end,
-		 allocation_site, size);
+	snprintf(buffer, 1023, "unbind %d", pid);
 	return write_procfs(buffer);
 }
 
-int bind_range_pid(int pid, unsigned long start, unsigned long end,
-		   unsigned long allocation_site, unsigned long size)
+int unbind_range(int pid, unsigned long start, unsigned long end)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_pid %d %lx %lx %lx %lx", pid, start,
-		 end, allocation_site, size);
-	return write_procfs(buffer);
-}
-
-
-int unbind_monitoring(void)
-{
-	return write_procfs("unbind_monitoring");
-}
-
-int bind_monitoring(void)
-{
-	return write_procfs("bind_monitoring");
-}
-
-
-int unbind(void)
-{
-	return write_procfs("unbind");
-}
-
-int unbind_(void)
-{
-	return unbind();
-}
-
-int unbind_pid(int pid)
-{
-	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_pid %d", pid);
-	return write_procfs(buffer);
-}
-
-int unbind_range(unsigned long start, unsigned long end)
-{
-	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range %lx %lx", start, end);
-	return write_procfs(buffer);
-}
-
-int unbind_range_pid(int pid, unsigned long start, unsigned long end)
-{
-	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range_pid %d %lx %lx", pid, start, end);
+	snprintf(buffer, 1023, "unbind_range %d %lx %lx", pid, start, end);
 	return write_procfs(buffer);
 }
 
 /************************ Memory Monitoring Only ******************************/
 
-int bind_range_monitoring(unsigned long start, unsigned long end,
+int bind_range_monitoring(int pid, unsigned long start, unsigned long end,
 			  unsigned long allocation_site, unsigned long size)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_monitoring %lx %lx %lx %lx", start,
-		 end, allocation_site, size);
+	snprintf(buffer, 1023, "bind_range_monitoring %d %lx %lx %lx %lx", pid,
+		 start, end, allocation_site, size);
 	return write_procfs(buffer);
 }
 
-int bind_range_monitoring_pid(int pid, unsigned long start, unsigned long end,
-			      unsigned long allocation_site, unsigned long size)
+int unbind_range_monitoring(int pid, unsigned long start, unsigned long end)
 {
 	char buffer[1024];
-	snprintf(buffer, 1023, "bind_range_monitoring_pid %d %lx %lx %lx %lx",
-		 pid, start, end, allocation_site, size);
-	return write_procfs(buffer);
-}
-
-int unbind_range_monitoring(unsigned long start, unsigned long end)
-{
-	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range_monitoring %lx %lx", start, end);
-	return write_procfs(buffer);
-}
-
-int unbind_range_monitoring_pid(int pid, unsigned long start, unsigned long end)
-{
-	char buffer[1024];
-	snprintf(buffer, 1023, "unbind_range_monitoring_pid %d %lx %lx", pid,
-		 start, end);
+	snprintf(buffer, 1023, "unbind_range_monitoring %d %lx %lx", pid, start,
+		 end);
 	return write_procfs(buffer);
 }
 
@@ -163,8 +96,8 @@ int get_object_mem_info(unsigned long start_addr, struct mem_info *info)
 
 	// Read the proc file
 	result = fscanf(file, "%*[^\n]\n%lu, %lu, %lu",
-			&info->slow_tier_usage_bytes,
-			&info->fast_tier_usage_bytes, &info->allocation_site);
+			&info->fast_tier_usage_bytes,
+			&info->slow_tier_usage_bytes, &info->allocation_site);
 
 	// Close the proc file
 	fclose(file);

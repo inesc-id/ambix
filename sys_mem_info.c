@@ -9,6 +9,8 @@
  * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
+#include "ambix_types.h"
+#include <linux/perf_event.h>
 #include <linux/pid.h>
 #include <linux/mutex.h>
 #include <linux/sysinfo.h>
@@ -22,6 +24,7 @@
 #include "sys_mem_info.h"
 #include "kernel_symbols.h"
 #include "vm_management.h"
+#include "migrate.h"
 
 DEFINE_MUTEX(USAGE_mtx);
 
@@ -34,11 +37,11 @@ const int NVRAM_NODES[] = _NVRAM_NODES;
 const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
 
-static unsigned long long ambix_dram_usage = 0;
-static unsigned long long ambix_nvram_usage = 0;
+unsigned long long ambix_dram_usage = 0;
+unsigned long long ambix_nvram_usage = 0;
 
-static unsigned long long total_dram_usage = 0;
-static unsigned long long total_nvram_usage = 0;
+unsigned long long total_dram_usage = 0;
+unsigned long long total_nvram_usage = 0;
 
 struct proc_dir_entry *proc_dir;
 
@@ -47,17 +50,32 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 	char *filename = s->file->f_path.dentry->d_iname;
 	int pid;
 	unsigned long start_addr;
-	struct vm_area_t *vm_area;
+	struct memory_range_t *vm_area;
 
 	sscanf(filename, "%d.%lu", &pid, &start_addr);
-	read_lock(&my_rwlock);
-	vm_area = ambix_get_vm_area(pid, start_addr);
+
+	mutex_lock(&bound_list_mutex);
+
+
+	vm_area = find_memory_range_for_address(pid, start_addr);
 
 	if (!vm_area) {
 		seq_printf(
 			s,
 			"fast_tier_usage, slow_tier_usage, allocation_site\n-1, -1, -1\n");
-		read_unlock(&my_rwlock);
+
+		mutex_unlock(&bound_list_mutex);
+
+		return 0;
+	}
+
+
+	if (vm_area->start_addr != start_addr) {
+		seq_printf(
+			s,
+			"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, 0\n", vm_area->start_addr, start_addr);
+
+		mutex_unlock(&bound_list_mutex);
 
 		return 0;
 	}
@@ -67,7 +85,8 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 		"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, %lu\n",
 		vm_area->fast_tier_bytes, vm_area->slow_tier_bytes,
 		vm_area->allocation_site);
-	read_unlock(&my_rwlock);
+
+	mutex_unlock(&bound_list_mutex);
 
 	return 0;
 }
@@ -118,106 +137,10 @@ int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 			return 1;
 		}
 	}
-	return 0;
-}
-
-struct vm_area_t *current_vm_global;
-
-static int pte_callback_usage(pte_t *ptep, unsigned long addr,
-			      unsigned long next, struct mm_walk *walk)
-{
-	int managed_by_ambix = 0;
-	if (!pte_present(*ptep))
-		return 0;
-
-	if (current_vm_global && addr >= current_vm_global->end_addr) {
-		struct vm_area_t *next_vm_area =
-			list_next_entry(current_vm_global, node);
-
-		if (&next_vm_area->node != &AMBIX_VM_AREAS) {
-			current_vm_global = next_vm_area;
-			current_vm_global->fast_tier_bytes = 0;
-			current_vm_global->slow_tier_bytes = 0;
-		} else {
-			current_vm_global = NULL;
-		}
-	}
-
-	if (current_vm_global && current_vm_global->start_addr <= addr)
-		managed_by_ambix = 1;
-
-	if (is_page_in_pool(*ptep, DRAM_POOL)) {
-		if (managed_by_ambix) {
-			current_vm_global->fast_tier_bytes += PAGE_SIZE;
-			ambix_dram_usage += PAGE_SIZE;
-		}
-		total_dram_usage += PAGE_SIZE;
-	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
-		if (managed_by_ambix) {
-			current_vm_global->slow_tier_bytes += PAGE_SIZE;
-			ambix_nvram_usage += PAGE_SIZE;
-		}
-		total_nvram_usage += PAGE_SIZE;
-	}
 
 	return 0;
 }
 
-void walk_ranges_usage(void)
-{
-	struct task_struct *t = NULL;
-	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_callback_usage };
-	struct mm_struct *mm = NULL;
-	struct vm_area_t *current_vm, *tmp;
-	unsigned int aux_pid = -1;
-
-	pr_info("Walking page ranges to get memory usage");
-
-	read_lock(&my_rwlock);
-
-	ambix_dram_usage = 0;
-	ambix_nvram_usage = 0;
-
-	total_dram_usage = 0;
-	total_nvram_usage = 0;
-
-	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
-		if (aux_pid == pid_nr(current_vm->__pid)) {
-			continue;
-		}
-
-		aux_pid = pid_nr(current_vm->__pid);
-
-		t = get_pid_task(current_vm->__pid, PIDTYPE_PID);
-		if (!t) {
-			pr_warn("Can't resolve task (%d).\n",
-				pid_nr(current_vm->__pid));
-			continue;
-		}
-		mm = get_task_mm(t);
-		if (!mm) {
-			pr_warn("Can't resolve mm_struct of task (%d)",
-				pid_nr(current_vm->__pid));
-			put_task_struct(t);
-			continue;
-		}
-
-		current_vm_global = current_vm;
-
-		current_vm_global->fast_tier_bytes = 0;
-		current_vm_global->slow_tier_bytes = 0;
-
-		mmap_read_lock(mm);
-		g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, NULL);
-		mmap_read_unlock(mm);
-
-		mmput(mm);
-		mm = NULL;
-		put_task_struct(t);
-		t = NULL;
-	}
-	read_unlock(&my_rwlock);
-}
 
 // page count to KiB
 const int *get_pool_nodes(const enum pool_t pool)
@@ -303,14 +226,16 @@ u32 get_memory_usage_percent(enum pool_t pool)
 		// freeram += inf.freeram;
 	}
 
-	write_lock(&my_rwlock);
+	mutex_lock(&bound_list_mutex);
+
 
 	if (pool == DRAM_POOL) {
 		usedram = ambix_dram_usage;
 	} else {
 		usedram = ambix_nvram_usage;
 	}
-	write_unlock(&my_rwlock);
+	mutex_unlock(&bound_list_mutex);
+
 
 	// pr_info("K(totalram) - freeram = %llu", (K(totalram) - freeram));
 	// pr_info("((K(totalram) - freeram) * 100 / K(totalram)) = %llu",
@@ -326,14 +251,16 @@ u32 get_memory_usage_percent(enum pool_t pool)
 unsigned long long get_memory_usage_bytes(enum pool_t pool)
 {
 	unsigned long long usedmem;
-	write_lock(&my_rwlock);
+	mutex_lock(&bound_list_mutex);
+
 
 	if (pool == DRAM_POOL) {
 		usedmem = total_dram_usage;
 	} else {
 		usedmem = total_nvram_usage;
 	}
-	write_unlock(&my_rwlock);
+	mutex_unlock(&bound_list_mutex);
+
 
 	return usedmem;
 }

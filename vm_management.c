@@ -18,211 +18,254 @@
 #include "sys_mem_info.h"
 #include "vm_management.h"
 
-DEFINE_RWLOCK(my_rwlock);
+LIST_HEAD(bound_program_list);
+DEFINE_MUTEX(bound_list_mutex);
 
-LIST_HEAD(AMBIX_VM_AREAS);
-
-int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
-			       unsigned long end_addr,
-			       unsigned long allocation_site,
-			       unsigned long size, int migrate_pages)
+bool create_pid_entry(int pid, int migrations_enabled)
 {
+	struct bound_program_t *new_bound_program, *entry;
 	struct pid *pid_p = NULL;
-	struct vm_area_t *current_vm;
-	int rc = 0;
 
 	pid_p = find_get_pid(pid);
-	if (!pid_p) {
-		pr_warn("Invalid pid value (%d): can't find pid.\n", pid);
-		rc = -1;
-		goto out;
+
+	new_bound_program = kmalloc(sizeof(struct bound_program_t), GFP_KERNEL);
+
+	if (!new_bound_program) {
+		printk(KERN_WARNING
+		       "Failed to allocate memory for pid_entry\n");
+		return false; // Return indicating failure
 	}
 
-	write_lock(&my_rwlock);
+	// Initialize the new PID entry
+	new_bound_program->__pid = pid_p;
+	new_bound_program->migrations_enabled = migrations_enabled;
+	new_bound_program->fast_tier_bytes = 0;
+	new_bound_program->slow_tier_bytes = 0;
+	INIT_LIST_HEAD(&new_bound_program->memory_ranges);
+	mutex_init(&new_bound_program->range_mutex);
 
-	list_for_each_entry (current_vm, &AMBIX_VM_AREAS, node) {
-		if (pid_nr(current_vm->__pid) == pid) {
-			if (current_vm->start_addr == start_addr &&
-			    current_vm->end_addr == end_addr) {
-				pr_info("Already managing given vm range.\n");
-				rc = -1;
-				goto out_unlock_put;
-			}
+	// Add the new PID entry to the global pid_list
+	mutex_lock(&bound_list_mutex);
 
-			if (current_vm->end_addr == MAX_ADDRESS) {
-				pr_info("Already entire process vm range.\n");
-				rc = -1;
-				goto out_unlock_put;
-			}
+	// Check if PID already exists to avoid duplicates
+	list_for_each_entry (entry, &bound_program_list, node) {
+		if (pid_nr(entry->__pid) == pid) {
+			printk(KERN_WARNING
+			       "PID entry for %d already exists.\n",
+			       pid);
+			kfree(new_bound_program);
+			mutex_unlock(&bound_list_mutex);
+			return false;
 		}
 	}
 
-	struct vm_area_t *new_area = kmalloc(sizeof(*new_area), GFP_KERNEL);
+	// Insert the new entry into the global list
+	list_add_tail(&new_bound_program->node, &bound_program_list);
 
-	if (!new_area) {
-		pr_info("Failed to allocate memory for new vm_area\n");
-		rc = -1;
-		goto out_unlock_put;
-	}
+	mutex_unlock(&bound_list_mutex);
 
-	new_area->__pid = pid_p;
-	new_area->start_addr = start_addr;
-	new_area->end_addr = end_addr;
-	new_area->total_size_bytes = size;
-	new_area->fast_tier_bytes = 0;
-	new_area->slow_tier_bytes = 0;
-	new_area->allocation_site = allocation_site;
-	new_area->migrate_pages = migrate_pages;
-
-	// Insert in order
-	struct vm_area_t *current_area;
-	list_for_each_entry (current_area, &AMBIX_VM_AREAS, node) {
-		if (pid < pid_nr(current_area->__pid)) {
-			list_add_tail(&new_area->node, &current_area->node);
-			goto inserted;
-		} else if (pid > pid_nr(current_area->__pid)) {
-			continue;
-		} else if (current_area->start_addr > new_area->start_addr) {
-			list_add_tail(&new_area->node, &current_area->node);
-			goto inserted;
-		}
-	}
-	list_add_tail(&new_area->node, &AMBIX_VM_AREAS);
-
-inserted:
-	pr_info("Bound pid=%d with start_addr=%lx and end_addr=%lx.\n", pid,
-		start_addr, end_addr);
-
-	create_proc_file(pid_nr(new_area->__pid), new_area->start_addr);
-
-out_unlock_put:
-
-	if (rc == -1)
-		put_pid(pid_p);
-
-	write_unlock(&my_rwlock);
-
-out:
-	return rc;
+	printk(KERN_INFO "PID entry for %d created successfully.\n", pid);
+	return true;
 }
 
-int ambix_bind_pid(const pid_t nr)
+void remove_pid_entry(int pid)
 {
-	return ambix_bind_pid_constrained(nr, 0, MAX_ADDRESS, 0, 0, 1);
-}
+	struct bound_program_t *pid_entry, *tmp_pid_entry;
+	struct memory_range_t *range, *tmp_range;
 
-int ambix_unbind_pid(const pid_t pid)
-{
-	struct vm_area_t *current_vm, *tmp;
+	mutex_lock(&bound_list_mutex);
 
-	write_lock(&my_rwlock);
-
-	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
-		if (pid_nr(current_vm->__pid) == pid) {
-			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
-				pid, current_vm->start_addr,
-				current_vm->end_addr);
-
-			put_pid(current_vm->__pid);
-			list_del(&current_vm->node);
-			if (!current_vm->migrate_pages) {
+	list_for_each_entry_safe (pid_entry, tmp_pid_entry, &bound_program_list,
+				  node) {
+		if (pid_nr(pid_entry->__pid) == pid) {
+			list_for_each_entry_safe (range, tmp_range,
+						  &pid_entry->memory_ranges,
+						  node) {
 				char filename[128];
-				snprintf(filename, 128, "%d.%lu",
-					 pid_nr(current_vm->__pid),
-					 current_vm->start_addr);
+				snprintf(filename, 128, "%d.%lu", pid,
+					 range->start_addr);
 				remove_proc_entry(filename, proc_dir);
+
+				list_del(&range->node);
+				kfree(range);
 			}
 
-			kfree(current_vm);
-		}
-	}
+			put_pid(pid_entry->__pid);
 
-	write_unlock(&my_rwlock);
+			list_del(&pid_entry->node);
+			kfree(pid_entry);
 
-	return 0;
-}
-
-int ambix_unbind_range_pid(const pid_t pid, unsigned long start,
-			   unsigned long end)
-{
-	struct vm_area_t *current_vm, *tmp;
-
-	write_lock(&my_rwlock);
-
-	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
-		if (pid_nr(current_vm->__pid) == pid &&
-		    start == current_vm->start_addr &&
-		    end == current_vm->end_addr) {
-			put_pid(current_vm->__pid);
-
-			list_del(&current_vm->node);
-
-			if (!current_vm->migrate_pages) {
-				char filename[128];
-				snprintf(filename, 128, "%d.%lu",
-					 pid_nr(current_vm->__pid),
-					 current_vm->start_addr);
-				remove_proc_entry(filename, proc_dir);
-			}
-
-			kfree(current_vm);
-
-			pr_info("Unbound pid=%d, start_addr=%lu, start_addr=%lu. \n",
-				pid, start, end);
+			printk(KERN_INFO
+			       "PID entry and its memory ranges removed for PID %d.\n",
+			       pid);
 			break;
 		}
 	}
 
-	write_unlock(&my_rwlock);
-
-	return 0;
+	mutex_unlock(&bound_list_mutex);
 }
 
-void refresh_bound_vm_areas(void)
+//! Caller should have mutex_lock(&pid_list_mutex)
+void refresh_bound_programs(void)
 {
-	struct vm_area_t *current_vm, *tmp;
+	struct bound_program_t *bound_program, *tmp_bound_program_t;
+	struct memory_range_t *range, *tmp_range;
 
-	write_lock(&my_rwlock);
-
-	list_for_each_entry_safe (current_vm, tmp, &AMBIX_VM_AREAS, node) {
+	list_for_each_entry_safe (bound_program, tmp_bound_program_t,
+				  &bound_program_list, node) {
 		struct task_struct *t =
-			get_pid_task(current_vm->__pid, PIDTYPE_PID);
+			get_pid_task(bound_program->__pid, PIDTYPE_PID);
 		if (t) {
 			put_task_struct(t);
 			continue;
 		}
 
-		pr_info("Process %d unbound from ambix.\n",
-			pid_nr(current_vm->__pid));
-
-		if (!current_vm->migrate_pages) {
+		list_for_each_entry_safe (range, tmp_range,
+					  &bound_program->memory_ranges, node) {
 			char filename[128];
 			snprintf(filename, 128, "%d.%lu",
-				 pid_nr(current_vm->__pid),
-				 current_vm->start_addr);
+				 pid_nr(bound_program->__pid),
+				 range->start_addr);
 			remove_proc_entry(filename, proc_dir);
+
+			list_del(&range->node);
+			kfree(range);
 		}
 
-		put_pid(current_vm->__pid);
-		list_del(&current_vm->node);
-		kfree(current_vm);
-	}
+		put_pid(bound_program->__pid);
 
-	write_unlock(&my_rwlock);
+		list_del(&bound_program->node);
+		kfree(bound_program);
+
+		printk(KERN_INFO
+		       "PID entry and its memory ranges removed for PID %d.\n",
+		       pid_nr(bound_program->__pid));
+		break;
+	}
 }
 
-//! Should be called holding read_lock(&my_rwlock);
-struct vm_area_t *ambix_get_vm_area(int pid, unsigned long addr)
+int add_memory_range(int pid, unsigned long start_addr, unsigned long end_addr,
+		     unsigned long allocation_site,
+		     unsigned long total_size_bytes)
 {
-	struct vm_area_t *current_vm;
+	struct bound_program_t *pid_entry = NULL;
+	struct memory_range_t *new_range, *range, *temp_range = NULL;
+	bool pid_found = false;
 
-	list_for_each_entry (current_vm, &AMBIX_VM_AREAS, node) {
-		if (pid_nr(current_vm->__pid) == pid &&
-		    current_vm->start_addr <= addr &&
-		    current_vm->end_addr > addr) {
-			return current_vm;
+	new_range = kmalloc(sizeof(struct memory_range_t), GFP_KERNEL);
+	if (!new_range) {
+		pr_info("Failed to allocate memory for memory range\n");
+		return 0;
+	}
+
+	new_range->start_addr = start_addr;
+	new_range->end_addr = end_addr;
+	new_range->total_size_bytes = total_size_bytes;
+	new_range->fast_tier_bytes = 0;
+	new_range->slow_tier_bytes = 0;
+	new_range->allocation_site = allocation_site;
+	new_range->migrate_pages = 1;
+
+	INIT_LIST_HEAD(&new_range->node);
+
+	mutex_lock(&bound_list_mutex);
+
+	// Check if PID exists and find ordered insertion point
+	list_for_each_entry (pid_entry, &bound_program_list, node) {
+		if (pid_nr(pid_entry->__pid) == pid) {
+			pid_found = true;
+			list_for_each_entry_safe (range, temp_range,
+						  &pid_entry->memory_ranges,
+						  node) {
+				/* Address already registered*/
+				if(start_addr == range->start_addr){
+					kfree(new_range);
+					mutex_unlock(&bound_list_mutex);
+					return 0;
+				}
+
+				if (start_addr < range->start_addr) {
+					list_add_tail(&new_range->node,
+						      &range->node);
+					create_proc_file(pid, start_addr);
+					goto inserted;
+				}
+			}
+
+			create_proc_file(pid, start_addr);
+			list_add_tail(&new_range->node,
+				      &pid_entry->memory_ranges);
+
+			break;
 		}
 	}
 
-	return NULL; // Return NULL if not found
+inserted:
+
+	mutex_unlock(&bound_list_mutex);
+
+	if (!pid_found) {
+		kfree(new_range);
+		pr_info("PID %d not bound to Ambix.\n", pid);
+		return 0;
+	}
+	return 1;
+}
+
+void remove_memory_range(int pid, unsigned long start_addr,
+			 unsigned long end_addr)
+{
+	struct bound_program_t *pid_entry;
+	struct memory_range_t *range, *tmp;
+
+	mutex_lock(&bound_list_mutex);
+
+	list_for_each_entry (pid_entry, &bound_program_list, node) {
+		if (pid_nr(pid_entry->__pid) == pid) {
+			list_for_each_entry_safe (
+				range, tmp, &pid_entry->memory_ranges, node) {
+				if (range->start_addr == start_addr &&
+				    range->end_addr == end_addr) {
+					char filename[128];
+					snprintf(filename, 128, "%d.%lu", pid,
+						 range->start_addr);
+					remove_proc_entry(filename, proc_dir);
+
+					list_del(&range->node);
+					kfree(range);
+					break; // Assuming no duplicate ranges for a PID
+				}
+			}
+			break;
+		}
+	}
+
+	mutex_unlock(&bound_list_mutex);
+}
+
+//! Caller should have mutex_lock(&pid_list_mutex)
+struct memory_range_t *find_memory_range_for_address(int pid,
+						     unsigned long address)
+{
+	struct bound_program_t *pid_entry;
+	struct memory_range_t *range;
+
+	list_for_each_entry (pid_entry, &bound_program_list, node) {
+		if (pid_nr(pid_entry->__pid) == pid) {
+			list_for_each_entry (range, &pid_entry->memory_ranges,
+					     node) {
+				if (address >= range->start_addr &&
+				    address < range->end_addr) {
+					mutex_unlock(&pid_entry->range_mutex);
+					return range;
+				}
+				if (address < range->start_addr) {
+					return range;
+				}
+			}
+			break;
+		}
+	}
+
+	return NULL; // Return NULL or the next closest range.
 }

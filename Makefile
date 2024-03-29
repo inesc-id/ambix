@@ -1,7 +1,7 @@
 obj-m += ambix.o
 ambix-objs := main.o find_kallsyms_lookup_name.o perf_counters.o placement.o tsc.o vm_management.o sys_mem_info.o migrate.o kernel_symbols.o ambix_types.o
 
-KBUILD_CFLAGS += -fno-omit-frame-pointer -Wno-declaration-after-statement
+KBUILD_CFLAGS += -fno-omit-frame-pointer -Wno-declaration-after-statement -Wno-frame-larger-than
 CC = gcc
 CFLAGS = -Wall -O2
 

@@ -9,9 +9,18 @@
 		 0xFFFF880000000000UL :                                        \
 		 0xC0000000UL) // Max user-space addresses for the x86 architecture
 
-struct vm_area_t {
-	struct list_head node;
+struct bound_program_t {
 	struct pid *__pid;
+	struct list_head memory_ranges;
+	struct mutex range_mutex;
+	struct list_head node;
+	unsigned long fast_tier_bytes;
+	unsigned long slow_tier_bytes;
+	int migrations_enabled;
+};
+
+struct memory_range_t {
+	struct list_head node;
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long allocation_site;
@@ -28,23 +37,28 @@ struct vm_area_walk_t {
 	unsigned long end_addr;
 };
 
-extern struct list_head AMBIX_VM_AREAS;
-extern rwlock_t my_rwlock;
 
-int ambix_bind_pid_constrained(const pid_t pid, unsigned long start_addr,
-			       unsigned long end_addr,
-			       unsigned long allocation_site,
-			       unsigned long size, int migrate_pages);
 
-int ambix_bind_pid(const pid_t nr);
+extern struct list_head bound_program_list;
+extern struct mutex bound_list_mutex;
 
-int ambix_unbind_pid(const pid_t nr);
 
-int ambix_unbind_range_pid(const pid_t nr, unsigned long start,
-			   unsigned long end);
+bool create_pid_entry(int pid, int migrations_enabled);
 
-void refresh_bound_vm_areas(void);
+void remove_pid_entry(int pid);
 
-struct vm_area_t *ambix_get_vm_area(int pid, unsigned long addr);
+//! Caller should have mutex_lock(&pid_list_mutex)
+void refresh_bound_programs(void);
+
+int add_memory_range(int pid, unsigned long start_addr, unsigned long end_addr,
+		     unsigned long allocation_site,
+		     unsigned long total_size_bytes);
+
+void remove_memory_range(int pid, unsigned long start_addr,
+			 unsigned long end_addr);
+
+//! Caller should have mutex_lock(&pid_list_mutex)
+struct memory_range_t *find_memory_range_for_address(int pid,
+						   unsigned long address);
 
 #endif // VM_MANAGEMENT_H

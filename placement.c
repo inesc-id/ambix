@@ -54,11 +54,9 @@
 #include "ambix_types.h"
 
 // Maximum number of pages that can be walked during a call to g_walk_page_range
-#define CLEAR_PTE_THRESHOLD 4194304
-#define FAST_TIER_WALK_THRESHOLD 1048576
-#define SLOW_TIER_WALK_THRESHOLD 2097152
+#define FAST_TIER_WALK_THRESHOLD 8388608
 
-#define MAX_N_FIND 131071U
+#define MAX_N_FIND 65536U
 #define PMM_MIXED 1
 
 #define DEMOTE_PAGES 0
@@ -79,6 +77,7 @@ struct pte_callback_context_t {
 
 	struct vm_heat_map fast_tier_pages;
 	struct vm_heat_map slow_tier_pages;
+	struct memory_range_t *tracking_range;
 } static g_context = { 0 };
 
 struct vm_area_walk_t last_fast_tier_scan;
@@ -90,223 +89,161 @@ unsigned long long dram_migrations[5];
 unsigned long long nvram_migrations[5];
 int migration_type = 0;
 
-const int g_switch_act = 1;
-const int g_thresh_act = 1;
+const int g_switch_act = 0;
+const int g_thresh_act = 0;
+
+int current_average = 0;
+int value_count = 0;
+
+#define SCALE_FACTOR 1000 // For precision
+
+unsigned long long temp_dram_usage = 0;
+unsigned long long temp_nvram_usage = 0;
+unsigned long long temp_cold_page_count = 0;
+unsigned long long temp_hot_page_count = 0;
+
+unsigned long long histogram[256] = { 0 };
+
+int g_threshold = 4;
+
+int page_cpupid_xchg_last(struct page *page, int cpupid)
+{
+	unsigned long old_flags, flags;
+	int last_cpupid;
+
+	do {
+		old_flags = flags = page->flags;
+		last_cpupid = page_cpupid_last(page);
+
+		flags &= ~(LAST_CPUPID_MASK << LAST_CPUPID_PGSHIFT);
+		flags |= (cpupid & LAST_CPUPID_MASK) << LAST_CPUPID_PGSHIFT;
+	} while (
+		unlikely(cmpxchg(&page->flags, old_flags, flags) != old_flags));
+
+	return last_cpupid;
+}
 
 // ==================================================================================
 // CALLBACK FUNCTIONS
 // ==================================================================================
 
-static int fast_tier_scan_callback(pte_t *ptep, unsigned long addr,
-				   unsigned long next, struct mm_walk *walk)
+static int page_scan_callback(pte_t *ptep, unsigned long addr,
+			      unsigned long next, struct mm_walk *walk)
 {
 	struct pte_callback_context_t *ctx =
 		(struct pte_callback_context_t *)walk->private;
 	pte_t old_pte, new_pte;
-	enum access_freq_t access_freq;
+	struct page *page = NULL;
+	bool managed_by_ambix = 0;
 
 	ctx->last_addr = addr;
 	ctx->walk_iter++;
-
-	if (ctx->n_found == ctx->n_to_find) {
-		pr_debug("Dram callback: found enough pages, last addr %lx\n",
-			 addr);
-		return 1;
-	}
 
 	if (ctx->walk_iter == FAST_TIER_WALK_THRESHOLD) {
 		return 1;
 	}
 
-	// If page is not present, write protected, or not in DRAM node
-	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
-	    !is_page_in_pool(*ptep, DRAM_POOL)) {
+	// If page is not present or read-only
+	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep)) {
 		return 0;
 	}
+
+	if (ctx->tracking_range && addr >= ctx->tracking_range->end_addr) {
+		struct memory_range_t *next_vm_area =
+			list_next_entry(ctx->tracking_range, node);
+
+		if (next_vm_area->start_addr >= addr) {
+			ctx->tracking_range = next_vm_area;
+			ctx->tracking_range->fast_tier_bytes = 0;
+			ctx->tracking_range->slow_tier_bytes = 0;
+		} else {
+			ctx->tracking_range = NULL;
+		}
+	}
+
+	if (ctx->tracking_range && ctx->tracking_range->start_addr <= addr)
+		managed_by_ambix = 1;
+
+	page = g_vm_normal_page(walk->vma, addr, *ptep);
+
+	int last = page_cpupid_last(page);
+	int new_value = last;
+
+	int age_shift = LAST_CPUPID_SHIFT - 6;
+
+	int age = last >> age_shift;
+
+	if (last == 0x1fffff) {
+		new_value = 0;
+		age = 0;
+	}
+
+	if ((new_value & ((1 << 8) - 1)) >= 128)
+		goto skip_update;
+
+	int cold_candidate = 0;
 
 	if (!pte_young(*ptep) && !pte_soft_dirty(*ptep)) {
-		access_freq = COLD_PAGE;
-		ctx->n_found++;
-		goto enqueue_page;
-	} else if (pte_young(*ptep)) {
-		access_freq = WARM_ACCESSED_PAGE;
-	} else if (pte_soft_dirty(*ptep)) {
-		access_freq = WARM_DIRTY_PAGE;
-	} else {
-		access_freq = HOT_PAGE;
+		if ((new_value & ((1 << 7) - 1)) > 0)
+			new_value--;
+		cold_candidate = 1;
 	}
-
-	old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-	new_pte = pte_mkold(old_pte); // unset modified bit
-	new_pte = pte_clear_soft_dirty(new_pte); // unset dirty bit
-	ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, new_pte);
-
-enqueue_page:
-	heat_map_add_page(&ctx->fast_tier_pages, addr, ctx->curr_pid,
-			  access_freq);
-
-	return 0;
-}
-
-// ----------------------------------------------------------------------------------
-
-static int slow_tier_exhaustive_scan_callback(pte_t *ptep, unsigned long addr,
-					      unsigned long next,
-					      struct mm_walk *walk)
-{
-	struct pte_callback_context_t *ctx =
-		(struct pte_callback_context_t *)walk->private;
-	enum access_freq_t access_freq;
-
-	ctx->last_addr = addr;
-	ctx->walk_iter++;
-
-	if (ctx->n_found == ctx->n_to_find) {
-		return 1;
-	}
-
-	if (ctx->walk_iter == SLOW_TIER_WALK_THRESHOLD) {
-		return 1;
-	}
-
-	// If page is not present, write protected, or not in NVRAM node
-	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
-	    !is_page_in_pool(*ptep, NVRAM_POOL)) {
-		return 0;
-	}
-
-	if (pte_young(*ptep) && pte_soft_dirty(*ptep)) {
-		access_freq = HOT_PAGE;
-		ctx->n_found++;
-	} else if (pte_young(*ptep)) {
-		access_freq = WARM_ACCESSED_PAGE;
-	} else if (pte_soft_dirty(*ptep)) {
-		access_freq = WARM_DIRTY_PAGE;
-	} else {
-		access_freq = COLD_PAGE;
-	}
-
-	heat_map_add_page(&ctx->slow_tier_pages, addr, ctx->curr_pid,
-			  access_freq);
-	return 0;
-}
-
-// ----------------------------------------------------------------------------------
-
-// used only for debug in ctl (PROMOTE_DIRTY_PAGES)
-static int slow_tier_write_priority_callback(pte_t *ptep, unsigned long addr,
-					     unsigned long next,
-					     struct mm_walk *walk)
-{
-	struct pte_callback_context_t *ctx =
-		(struct pte_callback_context_t *)walk->private;
-
-	ctx->last_addr = addr;
-	ctx->walk_iter++;
-
-	if (ctx->walk_iter == SLOW_TIER_WALK_THRESHOLD) {
-		return 1;
-	}
-
-	if (ctx->n_found == ctx->n_to_find) {
-		return 1;
-	}
-
-	// If page is not present, write protected, or not in NVRAM node
-	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
-	    !is_page_in_pool(*ptep, NVRAM_POOL)) {
-		return 0;
-	}
-
-	if (pte_soft_dirty(*ptep)) {
-		if (pte_young(*ptep)) {
-			// Send to DRAM (priority)
-			heat_map_add_page(&ctx->slow_tier_pages, addr,
-					  ctx->curr_pid, HOT_PAGE);
-			ctx->n_found++;
-		} else {
-			// Add to backup list
-			heat_map_add_page(&ctx->slow_tier_pages, addr,
-					  ctx->curr_pid, COLD_PAGE);
-		}
-	}
-
-	return 0;
-}
-
-// ----------------------------------------------------------------------------------
-
-static int slow_tier_access_priority_callback(pte_t *ptep, unsigned long addr,
-					      unsigned long next,
-					      struct mm_walk *walk)
-{
-	struct pte_callback_context_t *ctx =
-		(struct pte_callback_context_t *)walk->private;
-
-	ctx->last_addr = addr;
-	ctx->walk_iter++;
-
-	if (ctx->n_found == ctx->n_to_find) {
-		return 1;
-	}
-
-	if (ctx->walk_iter == SLOW_TIER_WALK_THRESHOLD) {
-		return 1;
-	}
-
-	// If page is not present, write protected, or not in NVRAM node
-	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
-	    !is_page_in_pool(*ptep, NVRAM_POOL)) {
-		return 0;
-	}
-
 	if (pte_young(*ptep)) {
-		if (pte_soft_dirty(*ptep)) {
-			// Send to DRAM (priority)
-			heat_map_add_page(&ctx->slow_tier_pages, addr,
-					  ctx->curr_pid, HOT_PAGE);
-			ctx->n_found++;
-			return 0;
+		new_value += 2;
+	}
+	if (pte_soft_dirty(*ptep)) {
+		new_value++;
+	}
+
+skip_update:
+
+	if (age == 0) {
+		value_count++;
+	}
+
+	if (age < 64)
+		new_value += 1 << age_shift;
+
+	page_cpupid_xchg_last(page, new_value);
+
+	int page_score = (new_value & ((1 << 7) - 1));
+
+	histogram[page_score % 256]++;
+
+	if (is_page_in_pool(*ptep, DRAM_POOL)) {
+		temp_dram_usage += PAGE_SIZE;
+
+		if (managed_by_ambix) {
+			ctx->tracking_range->fast_tier_bytes += PAGE_SIZE;
 		}
 
-		heat_map_add_page(&ctx->slow_tier_pages, addr, ctx->curr_pid,
-				  WARM_ACCESSED_PAGE);
+		if (age > 10 && page_score < g_threshold && cold_candidate) {
+			heat_map_add_page(&ctx->fast_tier_pages, addr,
+					  ctx->curr_pid, COLD_PAGE);
+			temp_cold_page_count++;
+		}
+
+	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
+		temp_nvram_usage += PAGE_SIZE;
+		if (managed_by_ambix) {
+			ctx->tracking_range->slow_tier_bytes += PAGE_SIZE;
+		}
+
+		if ((age <= 2 && !cold_candidate) ||
+		    (page_score > 6 * g_threshold && !cold_candidate)) {
+			heat_map_add_page(&ctx->slow_tier_pages, addr,
+					  ctx->curr_pid, HOT_PAGE);
+			temp_hot_page_count++;
+		}
 	}
 
-	return 0;
-}
-
-static int slow_tier_clear_pte_callback(pte_t *ptep, unsigned long addr,
-					unsigned long next,
-					struct mm_walk *walk)
-{
-	struct pte_callback_context_t *ctx =
-		(struct pte_callback_context_t *)walk->private;
-	pte_t old_pte, new_pte;
-
-	ctx->last_addr = addr;
-	ctx->walk_iter++;
-
-	if (ctx->n_found == ctx->n_to_find) {
-		return 1;
+	if (new_value > last) {
+		old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
+		new_pte = pte_mkold(old_pte); // unset modified bit
+		new_pte = pte_clear_soft_dirty(new_pte); // unset dirty bit
+		ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte,
+					new_pte);
 	}
-
-	if (ctx->walk_iter == CLEAR_PTE_THRESHOLD) {
-		return 1;
-	}
-
-	// If  page is not present, write protected, or page is not in NVRAM node
-	if ((ptep == NULL) || !pte_present(*ptep) || !pte_write(*ptep) ||
-	    !is_page_in_pool(*ptep, NVRAM_POOL)) {
-		return 0;
-	}
-
-	ctx->n_found++;
-
-	old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
-	new_pte = pte_mkold(old_pte); // unset modified bit
-	new_pte = pte_clear_soft_dirty(new_pte); // unset dirty bit
-	ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte, new_pte);
 
 	return 0;
 }
@@ -319,13 +256,33 @@ PAGE WALKERS
 -------------------------------------------------------------------------------
 */
 
-static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
-			unsigned long end_addr, pte_entry_handler_t pte_handler,
+void calculate_treshold(void)
+{
+	u64 total_pages = get_memory_total(DRAM_POOL) / PAGE_SIZE;
+	u64 temp = 0;
+	int i;
+	for (i = 255; i > 0; i--) {
+		temp += histogram[i];
+		if (temp > total_pages)
+			break;
+	}
+
+	g_threshold = i + 1;
+
+	pr_info("g_threshold: %d\n", g_threshold);
+}
+
+static int do_page_walk(struct bound_program_t *program,
+			unsigned long start_addr, unsigned long end_addr,
+			pte_entry_handler_t pte_handler,
 			struct pte_callback_context_t *ctx)
 {
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_handler };
 	struct task_struct *t;
 	struct mm_struct *mm;
+	int i;
+
+	struct pid *pid_p = program->__pid;
 
 	ctx->curr_pid = pid_p;
 
@@ -339,19 +296,46 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 		return 0;
 	}
 
-	do {
-		mmap_read_lock(mm);
-		g_walk_page_range(mm, start_addr, end_addr, &mem_walk_ops, ctx);
-		mmap_read_unlock(mm);
+	ctx->last_addr = start_addr;
+	mmap_read_lock(mm);
+	g_walk_page_range(mm, start_addr, end_addr, &mem_walk_ops, ctx);
+	mmap_read_unlock(mm);
 
-		if (ctx->n_found >= ctx->n_to_find)
-			break;
+	if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD) {
+		program->fast_tier_bytes = temp_dram_usage;
+		program->slow_tier_bytes = temp_nvram_usage;
+		pr_info("Usage (bytes) dram: %llu  pmem: %llu\n",
+			temp_dram_usage, temp_nvram_usage);
+		temp_nvram_usage = 0;
+		temp_dram_usage = 0;
 
-		if (start_addr == ctx->last_addr)
-			break;
+		pr_info("Pid: %d, Hot: %llu, Cold: %llu\n",
+			pid_nr(program->__pid), temp_hot_page_count,
+			temp_cold_page_count);
+		temp_hot_page_count = 0;
+		temp_cold_page_count = 0;
 
-		start_addr = ctx->last_addr;
-	} while (ctx->last_addr < end_addr);
+		calculate_treshold();
+
+		char histogram_str[10752];
+
+		char *where = histogram_str;
+		for (i = 0; i < 256; i++) {
+			size_t printed =
+				sprintf(where, "%d:%llu, ", i, histogram[i]);
+			histogram[i] = 0;
+			where += printed;
+		}
+
+		*where = '\n';
+
+		pr_info("%s", histogram_str);
+	}
+
+	if (!program->migrations_enabled) {
+		heat_map_clear(&ctx->fast_tier_pages);
+		heat_map_clear(&ctx->slow_tier_pages);
+	}
 
 	mmput(mm);
 	put_task_struct(t);
@@ -359,87 +343,63 @@ static int do_page_walk(struct pid *pid_p, unsigned long start_addr,
 	return 1;
 }
 
-#define list_for_each_entry_safe_circular(pos, n, head, member)                \
-	for (pos = list_first_entry(head, typeof(*pos), member),               \
-	    n = list_next_entry(pos, member);                                  \
-	     !list_entry_is_head(pos, head, member);                           \
-	     pos = n, n = list_next_entry(n, member))
-
 struct vm_area_walk_t
 walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 			   unsigned long end_addr,
 			   pte_entry_handler_t pte_handler,
 			   struct pte_callback_context_t *ctx)
 {
-	struct vm_area_t *start_vm, *current_vm, *end_vm;
-	int walk_count = 0;
-	unsigned long left, right;
+	struct bound_program_t *bound_program;
 	struct vm_area_walk_t ret;
 	ret.start_pid = start_pid;
 	ret.start_addr = start_addr;
+	int walk_count = 0;
 
-	read_lock(&my_rwlock);
+	mutex_lock(&bound_list_mutex);
 
 	ctx->walk_iter = 0;
 
-	start_vm = ambix_get_vm_area(start_pid, start_addr);
-	end_vm = ambix_get_vm_area(end_pid, end_addr);
+repeat:
 
-	current_vm = start_vm ? start_vm :
-				list_first_entry(&AMBIX_VM_AREAS,
-						 struct vm_area_t, node);
-
-	end_vm = end_vm ? end_vm :
-				list_first_entry(&AMBIX_VM_AREAS,
-						 struct vm_area_t, node);
-
-loop_back:
-
-	list_for_each_entry_from (current_vm, &AMBIX_VM_AREAS, node) {
-		if (!current_vm->migrate_pages)
+	list_for_each_entry (bound_program, &bound_program_list, node) {
+		if (pid_nr(bound_program->__pid) != start_pid &&
+		    walk_count == 0)
 			continue;
 
-		if (walk_count > 0) {
-			left = current_vm->start_addr;
-			right = current_vm == end_vm ? end_addr :
-						       current_vm->end_addr;
-		} else {
-			left = start_addr;
-			right = current_vm->end_addr;
-		}
+		ctx->tracking_range = find_memory_range_for_address(
+			pid_nr(bound_program->__pid), start_addr);
 
-		do_page_walk(current_vm->__pid, left, right, pte_handler, ctx);
+		do_page_walk(bound_program, start_addr, MAX_ADDRESS,
+			     pte_handler, ctx);
 
-		if (current_vm == end_vm) {
-			if (end_vm != start_vm)
-				goto out;
-			else if (walk_count > 0)
-				goto out;
-		}
+		start_addr = 0;
 
-		if (ctx->n_found >= ctx->n_to_find)
-			goto out;
+		ret.end_pid = pid_nr(bound_program->__pid);
 
-		if(ctx->walk_iter == FAST_TIER_WALK_THRESHOLD)
-			goto out;
+		if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD)
+			ret.end_addr = 0;
+
+		else
+			ret.end_addr = ctx->last_addr;
 
 		walk_count++;
 
-		struct vm_area_t *pos = list_next_entry(current_vm, node);
+		if (ctx->walk_iter == FAST_TIER_WALK_THRESHOLD)
+			goto out;
+	}
 
-		if (list_entry_is_head(pos, &AMBIX_VM_AREAS, node)) {
-			current_vm = list_first_entry(&AMBIX_VM_AREAS,
-						      struct vm_area_t, node);
-			goto loop_back;
-		}
+	if (walk_count == 0) {
+		walk_count++;
+		goto repeat;
 	}
 
 out:
 
-	ret.end_pid = pid_nr(current_vm->__pid);
-	ret.end_addr = ctx->last_addr;
+	if (ctx->walk_iter <= 1) {
+		ret.end_addr = 0;
+	}
 
-	read_unlock(&my_rwlock);
+	mutex_unlock(&bound_list_mutex);
 
 	return ret;
 }
@@ -453,11 +413,9 @@ struct vm_area_walk_t walk_all_vm_ranges(int start_pid,
 					  start_addr, pte_handler, ctx);
 }
 
-static int do_fast_tier_page_walk(pte_entry_handler_t pte_handler,
-				  struct pte_callback_context_t *ctx)
+static int do_ambix_page_walk(pte_entry_handler_t pte_handler,
+			      struct pte_callback_context_t *ctx)
 {
-	pr_info("Fast tier page walk\n");
-
 	struct vm_area_walk_t last_vm_area =
 		walk_all_vm_ranges(last_fast_tier_scan.end_pid,
 				   last_fast_tier_scan.end_addr, pte_handler,
@@ -472,41 +430,6 @@ static int do_fast_tier_page_walk(pte_entry_handler_t pte_handler,
 	return heat_map_size(&ctx->fast_tier_pages);
 }
 
-static int do_slow_tier_page_walk(pte_entry_handler_t pte_handler,
-				  struct pte_callback_context_t *ctx)
-{
-	pr_info("Slow tier page walk\n");
-
-	struct vm_area_walk_t last_vm_area = walk_vm_ranges_constrained(
-		last_fast_tier_scan.start_pid, last_fast_tier_scan.end_pid,
-		last_fast_tier_scan.start_addr, last_fast_tier_scan.end_addr,
-		pte_handler, ctx);
-
-	last_fast_tier_scan.start_pid = last_vm_area.end_pid;
-	last_fast_tier_scan.start_pid = last_vm_area.end_addr;
-
-	return heat_map_size(&ctx->slow_tier_pages);
-}
-
-static int clear_slow_tier_ptes(struct pte_callback_context_t *ctx)
-{
-	ctx->n_to_find = CLEAR_PTE_THRESHOLD;
-
-	pr_info("Clearing NVRAM PTEs\n");
-	struct vm_area_walk_t last_vm_area =
-		walk_all_vm_ranges(last_fast_tier_scan.end_pid,
-				   last_fast_tier_scan.end_addr,
-				   slow_tier_clear_pte_callback, ctx);
-
-	last_fast_tier_scan.start_pid = last_fast_tier_scan.end_pid;
-	last_fast_tier_scan.start_pid = last_fast_tier_scan.end_addr;
-
-	last_fast_tier_scan.end_pid = last_vm_area.end_pid;
-	last_fast_tier_scan.end_addr = last_vm_area.end_addr;
-
-	return ctx->n_found;
-}
-
 /**
  * returns number of pages found if success, 0 if error occurs
  **/
@@ -516,351 +439,92 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 	ctx->n_found = 0;
 	ctx->n_to_find = n;
 
-	switch (mode) {
-	case DEMOTE_PAGES:
-		pte_handler = fast_tier_scan_callback;
-		return min(n, do_fast_tier_page_walk(pte_handler, ctx));
-
-		break;
-	case EVICT_FAST_TIER:
-		pte_handler = slow_tier_exhaustive_scan_callback;
-		break;
-	case PROMOTE_DIRTY_PAGES:
-		pte_handler = slow_tier_write_priority_callback;
-		break;
-	case PROMOTE_YOUNG_PAGES:
-		pte_handler = slow_tier_access_priority_callback;
-		break;
-	default:
-		printk("Unrecognized mode.\n");
-		return -1;
-	}
-
-	return min(n, do_slow_tier_page_walk(pte_handler, ctx));
-}
-
-/**
- * return number of pages to switch if success, (0 otherwise)
- **/
-int switch_walk(struct pte_callback_context_t *ctx, u32 n_pages)
-{
-	int hot_pages_found, cold_pages_found;
-
-	ctx->n_to_find = n_pages / 2;
-	ctx->n_found = 0;
-
-	hot_pages_found =
-		do_slow_tier_page_walk(slow_tier_access_priority_callback, ctx);
-
-	pr_info("Found %d    %d    %d    %d/%d pages in NVRAM\n",
-		ctx->slow_tier_pages.index[HOT_PAGE],
-		ctx->slow_tier_pages.index[WARM_ACCESSED_PAGE],
-		ctx->slow_tier_pages.index[WARM_DIRTY_PAGE], hot_pages_found,
-		n_pages);
-
-	ctx->n_to_find = min((u32)hot_pages_found, n_pages);
-
-	// ?Maybe skip the next page walk with numbers >0 but lower than const
-	if (ctx->n_to_find == 0) {
-		pr_info("Skipped DRAM walk\n");
-		return 0;
-	}
-
-	ctx->n_found = 0;
-
-	cold_pages_found = do_fast_tier_page_walk(fast_tier_scan_callback, ctx);
-
-	pr_info("Found %d   %d    %d    %d/%d pages in DRAM\n",
-		ctx->fast_tier_pages.index[COLD_PAGE],
-		ctx->fast_tier_pages.index[WARM_DIRTY_PAGE],
-		ctx->fast_tier_pages.index[WARM_ACCESSED_PAGE],
-		cold_pages_found, ctx->n_to_find);
-
-	u32 slow_tier_hotter_pages =
-		heat_map_compare(&ctx->slow_tier_pages, &ctx->fast_tier_pages);
-
-	return min(n_pages, slow_tier_hotter_pages);
-}
-
-// returns number of pages if success, negative value otherwise
-int find_candidate_pages(struct pte_callback_context_t *ctx, u32 n_pages,
-			 int mode)
-{
 	heat_map_clear(&ctx->fast_tier_pages);
 	heat_map_clear(&ctx->slow_tier_pages);
 
-	switch (mode) {
-	case DEMOTE_PAGES:
-	case EVICT_FAST_TIER:
-	case PROMOTE_DIRTY_PAGES:
-	case PROMOTE_YOUNG_PAGES:
-		BUG_ON(n_pages > MAX_N_FIND);
-		return mem_walk(ctx, n_pages, mode);
-	case SWITCH_MODE:
-		BUG_ON(n_pages > (MAX_N_FIND / 2));
-		return switch_walk(ctx, n_pages);
-	default:
-		pr_info("Unrecognized mode.\n");
-		return -1;
-	}
-}
+	pte_handler = page_scan_callback;
+	do_ambix_page_walk(pte_handler, ctx);
 
-/**
- * returns number of migrated pages
- */
-static u32 kmod_migrate_pages(struct pte_callback_context_t *ctx,
-			      const int nr_pages, const int mode)
-{
-	int rc;
-	u32 nr;
-	u64 tsc_start, find_candidates_us;
-	pr_info("It was requested %d page migrations mode: %d\n", nr_pages,
-		mode);
+	pr_info("found %d cold pages in dram \n",
+		heat_map_size(&ctx->fast_tier_pages));
+	pr_info("found %d hot pages in optane \n",
+		heat_map_size(&ctx->slow_tier_pages));
+	u32 slow_tier_hotter_pages =
+		heat_map_compare(&ctx->slow_tier_pages, &ctx->fast_tier_pages);
 
-	tsc_start = tsc_rd();
-	rc = find_candidate_pages(ctx, nr_pages, mode);
-	find_candidates_us = tsc_to_usec(tsc_rd() - tsc_start);
-	if (rc <= 0) {
-		pr_info("No candidates were found (%lldus)\n",
-			find_candidates_us);
-		return 0;
+	int demoted = 0;
+	int promoted = 0;
+
+	int ram_usage = get_real_memory_usage_per(DRAM_POOL);
+
+	if (ram_usage > DRAM_MEM_USAGE_TARGET_PERCENT &&
+	    heat_map_size(&ctx->fast_tier_pages)) {
+		demoted += do_migration(
+			&ctx->fast_tier_pages,
+			min(MAX_N_FIND, heat_map_size(&ctx->fast_tier_pages)),
+			NVRAM_POOL, COLDER_PAGES_FIRST);
 	}
 
-	pr_debug("Found %d candidates (%lldus)\n", rc, find_candidates_us);
-
-	nr = 0;
-	tsc_start = tsc_rd();
-	migration_type = mode;
-	switch (mode) {
-	case DEMOTE_PAGES:
-		nr = do_migration(&ctx->fast_tier_pages, rc, NVRAM_POOL,
-				  COLDER_PAGES_FIRST);
-		pr_debug("DRAM migration of %d pages took %lldus", nr,
-			 tsc_to_usec(tsc_rd() - tsc_start));
-		break;
-	case EVICT_FAST_TIER:
-	case PROMOTE_DIRTY_PAGES:
-	case PROMOTE_YOUNG_PAGES:
-		nr = do_migration(&ctx->slow_tier_pages, rc, DRAM_POOL,
-				  WARMER_PAGES_FIRST);
-		pr_debug("NVRAM migration of %d pages took %lldus", nr,
-			 tsc_to_usec(tsc_rd() - tsc_start));
-		break;
-	case SWITCH_MODE:
-		pr_info("Switching: %d\n", rc);
-
-		nr = do_migration(&ctx->fast_tier_pages, rc, NVRAM_POOL,
-				  COLDER_PAGES_FIRST) +
-		     do_migration(&ctx->slow_tier_pages, rc, DRAM_POOL,
-				  WARMER_PAGES_FIRST);
-
-		pr_debug("Switch of %d pages took %lldus", nr,
-			 tsc_to_usec(tsc_rd() - tsc_start));
-		break;
+	if (ram_usage < DRAM_MEM_USAGE_TARGET_PERCENT &&
+	    heat_map_size(&ctx->slow_tier_pages)) {
+		promoted += do_migration(
+			&ctx->slow_tier_pages,
+			min(MAX_N_FIND, heat_map_size(&ctx->slow_tier_pages)),
+			DRAM_POOL, WARMER_PAGES_FIRST);
 	}
-	return nr;
+
+	if (ram_usage == DRAM_MEM_USAGE_TARGET_PERCENT &&
+	    slow_tier_hotter_pages > 0) {
+		demoted += do_migration(&ctx->fast_tier_pages,
+					min(MAX_N_FIND, slow_tier_hotter_pages),
+					NVRAM_POOL, COLDER_PAGES_FIRST);
+
+		promoted +=
+			do_migration(&ctx->slow_tier_pages,
+				     min(MAX_N_FIND, slow_tier_hotter_pages),
+				     DRAM_POOL, WARMER_PAGES_FIRST);
+	}
+
+	pr_info("Promoted: %d, Demoted: %d\n", promoted, demoted);
+
+	return 1;
 }
 
 // MAIN ENTRY POINT
 int ambix_check_memory(void)
 {
 	u32 n_migrated = 0;
-	//int i = 0;
 	struct pte_callback_context_t *ctx = &g_context;
 
 	pr_info("Memory management routine\n");
-	pr_info("Migrated %llu since start", total_migrations);
-	/*
-	unsigned long long ts = ktime_get_real_fast_ns();
-	pr_info("dram,%llu,%llu,%llu,%llu,%llu,%llu", dram_migrations[0],
-		dram_migrations[1], dram_migrations[2], dram_migrations[3],
-		dram_migrations[4], ts);
 
-	pr_info("nvram,%llu,%llu,%llu,%llu,%llu,%llu", nvram_migrations[0],
-		nvram_migrations[1], nvram_migrations[2], nvram_migrations[3],
-		nvram_migrations[4], ts);
-	for (i = 0; i < 5; i++) {
-		dram_migrations[i] = 0;
-		nvram_migrations[i] = 0;
-	}*/
+	//u64 track_start = tsc_rd();
 
+	//pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
 
-	refresh_bound_vm_areas();
-	walk_ranges_usage();
-	
-	read_lock(&my_rwlock);
+	mutex_lock(&bound_list_mutex);
 
-	if (list_empty(&AMBIX_VM_AREAS)) {
-		pr_debug("No bound processes...\n");
-		read_unlock(&my_rwlock);
+	refresh_bound_programs();
+
+	if (list_empty(&bound_program_list)) {
+		pr_info("No bound processes...\n");
+		mutex_unlock(&bound_list_mutex);
 
 		goto release_return_acm;
 	}
 
-	read_unlock(&my_rwlock);
-	//u64 track_start = tsc_rd();
-	
+	mutex_unlock(&bound_list_mutex);
 
-	//pr_info("Tracking time: %lu\n", tsc_to_usec(tsc_rd() - track_start));
-
-	pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
+	/*pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
 	pr_info("Ambix NVRAM Usage: %d\n",
 		get_memory_usage_percent(NVRAM_POOL));
 
 	pr_info("System DRAM Usage: %d\n",
 		get_real_memory_usage_per(DRAM_POOL));
 	pr_info("System NVRAM Usage: %d\n",
-		get_real_memory_usage_per(NVRAM_POOL));
+		get_real_memory_usage_per(NVRAM_POOL));*/
 
-	if (g_switch_act) {
-		u64 pmm_bw = 0;
-
-		if (PMM_MIXED) {
-			pmm_bw = perf_counters_pmm_writes() +
-				 perf_counters_pmm_reads();
-		} else {
-			pmm_bw = perf_counters_pmm_writes();
-		}
-
-		pr_info("BANDWIDTH PMM = %lld", pmm_bw);
-		pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw,
-			 NVRAM_BANDWIDTH_THRESHOLD);
-		if (pmm_bw >= NVRAM_BANDWIDTH_THRESHOLD) {
-			u64 tsc_start = tsc_rd(), clear_us, migrate_us;
-
-			// ? This should probably be done either at the end of the previous ambix run
-			// ? or there should be a delay after it is called
-			clear_slow_tier_ptes(ctx);
-			clear_us = tsc_to_usec(tsc_rd() - tsc_start);
-
-			if (get_memory_usage_percent(DRAM_POOL) <
-				    DRAM_MEM_USAGE_TARGET_PERCENT &&
-			    get_real_memory_usage_per(DRAM_POOL) <
-				    AMBIX_DRAM_HARD_LIMIT) {
-				u64 n_bytes, n_bytes_sys;
-				u32 n_pages, num;
-
-				// [DRAM_USAGE_LIMIT (%) - DRAM_USAGE_NODE (%)] * TOTAL_MEM_NODE
-				// (#bytes)
-				n_bytes_sys = ((AMBIX_DRAM_HARD_LIMIT -
-						get_real_memory_usage_per(
-							DRAM_POOL)) *
-					       get_memory_total(DRAM_POOL)) /
-					      100;
-				n_bytes =
-					((DRAM_MEM_USAGE_LIMIT_PERCENT -
-					  get_memory_usage_percent(DRAM_POOL)) *
-					 get_memory_total_ratio(DRAM_POOL)) /
-					100;
-
-				n_pages = min(n_bytes_sys / PAGE_SIZE,
-					      min(n_bytes / PAGE_SIZE,
-						  (u64)MAX_N_FIND));
-
-				tsc_start = tsc_rd();
-				num = kmod_migrate_pages(ctx, n_pages,
-							 PROMOTE_YOUNG_PAGES);
-				migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
-
-				n_migrated += num;
-				total_migrations += num;
-				nvram_migrations[PROMOTE_YOUNG_PAGES] += num;
-				pr_info("NVRAM->DRAM [B]: Migrated %d intensive pages out of %d."
-					" (%lldus cleanup; %lldus migration) \n",
-					num, n_pages, clear_us, migrate_us);
-			} else {
-				u32 num;
-				tsc_start = tsc_rd();
-				num = kmod_migrate_pages(ctx, MAX_N_FIND / 2,
-							 SWITCH_MODE);
-				nvram_migrations[SWITCH_MODE] += num;
-				dram_migrations[SWITCH_MODE] += num;
-				migrate_us = tsc_to_usec(tsc_rd() - tsc_start);
-				n_migrated += num;
-				total_migrations += num;
-				total_migrations += num;
-				pr_info("DRAM<->NVRAM [B]: Switched %d pages."
-					" (%lldus cleanup; %lldus migration)\n",
-					num, clear_us, migrate_us);
-			}
-		}
-	}
-	if (g_thresh_act) {
-		pr_debug(
-			"Thresholds: DRAM limit %d of %d; NVRAM target %d of %d\n",
-			get_memory_usage_percent(DRAM_POOL),
-			DRAM_MEM_USAGE_LIMIT_PERCENT,
-			get_memory_usage_percent(NVRAM_POOL),
-			NVRAM_MEM_USAGE_TARGET_PERCENT);
-		if ((get_memory_usage_percent(DRAM_POOL) >
-		     DRAM_MEM_USAGE_LIMIT_PERCENT) &&
-		    ((get_memory_usage_percent(NVRAM_POOL) <
-		      NVRAM_MEM_USAGE_TARGET_PERCENT) &&
-		     get_real_memory_usage_per(NVRAM_POOL) <
-			     AMBIX_NVRAM_HARD_LIMIT)) {
-			u64 n_bytes_sys =
-				((AMBIX_NVRAM_HARD_LIMIT -
-				  get_real_memory_usage_per(NVRAM_POOL)) *
-				 get_memory_total(NVRAM_POOL)) /
-				100;
-			u64 n_bytes =
-				min((get_memory_usage_percent(DRAM_POOL) -
-				     DRAM_MEM_USAGE_TARGET_PERCENT) *
-					    get_memory_total_ratio(DRAM_POOL),
-				    (NVRAM_MEM_USAGE_TARGET_PERCENT -
-				     get_memory_usage_percent(NVRAM_POOL)) *
-					    get_memory_total_ratio(
-						    NVRAM_POOL)) /
-				100;
-			u32 n_pages =
-				min(n_bytes_sys / PAGE_SIZE,
-				    min(n_bytes / PAGE_SIZE, (u64)MAX_N_FIND));
-			u64 const tsc_start = tsc_rd();
-			u32 num =
-				kmod_migrate_pages(ctx, n_pages, DEMOTE_PAGES);
-			dram_migrations[DEMOTE_PAGES] += num;
-			u64 const migrate_us =
-				tsc_to_usec(tsc_rd() - tsc_start);
-			n_migrated += num;
-			total_migrations += num;
-			pr_info("DRAM->NVRAM [U]: Migrated %d out of %d pages."
-				" (%lldus)\n",
-				num, n_pages, migrate_us);
-		} else if (!g_switch_act &&
-			   (get_memory_usage_percent(NVRAM_POOL) >
-			    NVRAM_MEM_USAGE_LIMIT_PERCENT) &&
-			   (get_memory_usage_percent(DRAM_POOL) <
-			    DRAM_MEM_USAGE_TARGET_PERCENT) &&
-			   get_real_memory_usage_per(DRAM_POOL) <
-				   AMBIX_DRAM_HARD_LIMIT) {
-			s64 n_bytes =
-				min((get_memory_usage_percent(NVRAM_POOL) -
-				     NVRAM_MEM_USAGE_TARGET_PERCENT) *
-					    get_memory_total_ratio(NVRAM_POOL),
-				    (DRAM_MEM_USAGE_TARGET_PERCENT -
-				     get_memory_usage_percent(DRAM_POOL)) *
-					    get_memory_total_ratio(DRAM_POOL)) /
-				100;
-			s64 n_bytes_sys =
-				((AMBIX_DRAM_HARD_LIMIT -
-				  get_real_memory_usage_per(DRAM_POOL)) *
-				 get_memory_total(DRAM_POOL)) /
-				100;
-			u32 n_pages = min(n_bytes / PAGE_SIZE,
-					  n_bytes_sys / PAGE_SIZE);
-			u64 const tsc_start = tsc_rd();
-			u32 num = kmod_migrate_pages(ctx, n_pages,
-						     EVICT_FAST_TIER);
-			nvram_migrations[EVICT_FAST_TIER] += num;
-			u64 const migrate_us =
-				tsc_to_usec(tsc_rd() - tsc_start);
-			n_migrated += num;
-			total_migrations += num;
-			pr_info("NVRAM->DRAM [U]: Migrated %d out of %d pages."
-				" (%lldus)\n",
-				num, n_pages, migrate_us);
-		}
-	}
+	mem_walk(ctx, MAX_N_FIND, 1);
 
 release_return_acm:
 	return n_migrated;

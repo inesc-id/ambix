@@ -11,6 +11,12 @@ extern const int NVRAM_NODES[];
 extern const int n_dram_nodes;
 extern const int n_nvram_nodes;
 
+extern unsigned long long ambix_dram_usage;
+extern unsigned long long ambix_nvram_usage;
+
+extern unsigned long long total_dram_usage;
+extern unsigned long long total_nvram_usage;
+
 extern struct proc_dir_entry *proc_dir;
 
 
