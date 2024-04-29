@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import ScalarFormatter
 
-your_pid = "48477"
+your_pid = "2884"
 default_file = "/var/log/syslog"
 found_program = False
 first_timestamp = 0
@@ -46,6 +46,8 @@ def parse_log_line(line, data):
 	if entry_match:
 		timestamp = float(entry_match.group(1))
 		if match := regex_patterns["hot_cold_pages"].search(line):
+			print(match.group(1))
+
 			if match.group(1) == your_pid :
 				if not found_program:
 					found_program = True
@@ -57,8 +59,8 @@ def parse_log_line(line, data):
 		if not found_program:
 			return True 
 
-		if "No bound processes..." in line:
-			return False
+		#if "No bound processes..." in line and found_program:
+		#	return False
 
 		if match := regex_patterns["memory_usage"].search(line):
 			data["memory_usage_timestamps"].append(int(timestamp - first_timestamp))
@@ -212,23 +214,34 @@ if __name__ == "__main__":
 	}	
 
 	# Parse the log file
+	count = 0
 	with open(args.file, "r") as logfile:
 		for line in logfile:
 			if not parse_log_line(line, data):
 				break  # Stop processing if "No bound processes..." is found
+
+	for arr in data:
+		print(f'arr: {len(data[arr])}')
     
     # Generate selected graphs
 	if 'hot_cold' in args.graphs:
 		generate_hot_cold_graph(data)
+		plt.show()
+
 	if 'memory_usage' in args.graphs:
 		generate_memory_usage_graph(data)
+		plt.show()
+
 	if 'promotion_demotion' in args.graphs:
 		generate_promotion_demotion_graph(data)
+		plt.show()
+
 	if 'score_distribution' in args.graphs:
 		generate_score_distribution_graph(data)
+		plt.show()
 
 
-	plt.show()
+
 
 
 

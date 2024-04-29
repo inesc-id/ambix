@@ -70,7 +70,7 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 	}
 
 
-	if (vm_area->start_addr != start_addr) {
+	/*if (vm_area->start_addr != start_addr) {
 		seq_printf(
 			s,
 			"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, 0\n", vm_area->start_addr, start_addr);
@@ -78,7 +78,7 @@ static int vm_area_mem_info_show(struct seq_file *s, void *private)
 		mutex_unlock(&bound_list_mutex);
 
 		return 0;
-	}
+	}*/
 
 	seq_printf(
 		s,

@@ -166,7 +166,7 @@ int add_memory_range(int pid, unsigned long start_addr, unsigned long end_addr,
 	new_range->allocation_site = allocation_site;
 	new_range->migrate_pages = 1;
 
-	INIT_LIST_HEAD(&new_range->node);
+	//INIT_LIST_HEAD(&new_range->node);
 
 	mutex_lock(&bound_list_mutex);
 
@@ -178,7 +178,7 @@ int add_memory_range(int pid, unsigned long start_addr, unsigned long end_addr,
 						  &pid_entry->memory_ranges,
 						  node) {
 				/* Address already registered*/
-				if(start_addr == range->start_addr){
+				if (start_addr == range->start_addr) {
 					kfree(new_range);
 					mutex_unlock(&bound_list_mutex);
 					return 0;
@@ -203,6 +203,15 @@ int add_memory_range(int pid, unsigned long start_addr, unsigned long end_addr,
 inserted:
 
 	mutex_unlock(&bound_list_mutex);
+
+	if (pid_found) {
+		list_for_each_entry_safe (range, temp_range,
+					  &pid_entry->memory_ranges, node) {
+			/* Address already registered*/
+			pr_info("start: %lu, \n", range->start_addr);
+			
+		}
+	}
 
 	if (!pid_found) {
 		kfree(new_range);

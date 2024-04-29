@@ -54,7 +54,7 @@
 #include "ambix_types.h"
 
 // Maximum number of pages that can be walked during a call to g_walk_page_range
-#define FAST_TIER_WALK_THRESHOLD 8388608
+#define FAST_TIER_WALK_THRESHOLD 33554432
 
 #define MAX_N_FIND 65536U
 #define PMM_MIXED 1
@@ -102,7 +102,7 @@ unsigned long long temp_nvram_usage = 0;
 unsigned long long temp_cold_page_count = 0;
 unsigned long long temp_hot_page_count = 0;
 
-unsigned long long histogram[256] = { 0 };
+unsigned long long histogram[1024] = { 0 };
 
 int g_threshold = 4;
 
@@ -149,19 +149,29 @@ static int page_scan_callback(pte_t *ptep, unsigned long addr,
 	}
 
 	if (ctx->tracking_range && addr >= ctx->tracking_range->end_addr) {
+	next_area:
 		struct memory_range_t *next_vm_area =
 			list_next_entry(ctx->tracking_range, node);
 
-		if (next_vm_area->start_addr >= addr) {
+		// Looped back to the start of the circular list
+		if (next_vm_area->start_addr <
+		    ctx->tracking_range->start_addr) {
+			ctx->tracking_range = NULL;
+		} else {
+			if (next_vm_area->end_addr < addr) {
+				ctx->tracking_range = next_vm_area;
+				goto next_area;
+			}
+
 			ctx->tracking_range = next_vm_area;
 			ctx->tracking_range->fast_tier_bytes = 0;
 			ctx->tracking_range->slow_tier_bytes = 0;
-		} else {
-			ctx->tracking_range = NULL;
 		}
 	}
 
-	if (ctx->tracking_range && ctx->tracking_range->start_addr <= addr)
+
+	if (ctx->tracking_range && ctx->tracking_range->start_addr <= addr &&
+	    ctx->tracking_range->end_addr > addr)
 		managed_by_ambix = 1;
 
 	page = g_vm_normal_page(walk->vma, addr, *ptep);
@@ -208,7 +218,7 @@ skip_update:
 
 	int page_score = (new_value & ((1 << 7) - 1));
 
-	histogram[page_score % 256]++;
+	histogram[page_score % 1024]++;
 
 	if (is_page_in_pool(*ptep, DRAM_POOL)) {
 		temp_dram_usage += PAGE_SIZE;
@@ -228,6 +238,7 @@ skip_update:
 		if (managed_by_ambix) {
 			ctx->tracking_range->slow_tier_bytes += PAGE_SIZE;
 		}
+
 
 		if ((age <= 2 && !cold_candidate) ||
 		    (page_score > 6 * g_threshold && !cold_candidate)) {
@@ -269,7 +280,7 @@ void calculate_treshold(void)
 
 	g_threshold = i + 1;
 
-	pr_info("g_threshold: %d\n", g_threshold);
+	//pr_info("g_threshold: %d\n", g_threshold);
 }
 
 static int do_page_walk(struct bound_program_t *program,
@@ -280,7 +291,6 @@ static int do_page_walk(struct bound_program_t *program,
 	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_handler };
 	struct task_struct *t;
 	struct mm_struct *mm;
-	int i;
 
 	struct pid *pid_p = program->__pid;
 
@@ -314,22 +324,6 @@ static int do_page_walk(struct bound_program_t *program,
 			temp_cold_page_count);
 		temp_hot_page_count = 0;
 		temp_cold_page_count = 0;
-
-		calculate_treshold();
-
-		char histogram_str[10752];
-
-		char *where = histogram_str;
-		for (i = 0; i < 256; i++) {
-			size_t printed =
-				sprintf(where, "%d:%llu, ", i, histogram[i]);
-			histogram[i] = 0;
-			where += printed;
-		}
-
-		*where = '\n';
-
-		pr_info("%s", histogram_str);
 	}
 
 	if (!program->migrations_enabled) {
@@ -354,6 +348,7 @@ walk_vm_ranges_constrained(int start_pid, unsigned long start_addr, int end_pid,
 	ret.start_pid = start_pid;
 	ret.start_addr = start_addr;
 	int walk_count = 0;
+	int i;
 
 	mutex_lock(&bound_list_mutex);
 
@@ -366,8 +361,33 @@ repeat:
 		    walk_count == 0)
 			continue;
 
+		if (list_entry_is_head(bound_program, &bound_program_list,
+				       node) &&
+		    start_addr == 0) {
+			calculate_treshold();
+
+			char histogram_str[10752];
+
+			char *where = histogram_str;
+			for (i = 0; i < 256; i++) {
+				size_t printed = sprintf(where, "%d:%llu, ", i,
+							 histogram[i]);
+				histogram[i] = 0;
+				where += printed;
+			}
+
+			*where = '\n';
+
+			trace_printk("%s", histogram_str);
+		}
+
 		ctx->tracking_range = find_memory_range_for_address(
 			pid_nr(bound_program->__pid), start_addr);
+
+		if (ctx->tracking_range) {
+			ctx->tracking_range->fast_tier_bytes = 0;
+			ctx->tracking_range->slow_tier_bytes = 0;
+		}
 
 		do_page_walk(bound_program, start_addr, MAX_ADDRESS,
 			     pte_handler, ctx);
