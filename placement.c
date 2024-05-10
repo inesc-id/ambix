@@ -54,7 +54,7 @@
 #include "ambix_types.h"
 
 // Maximum number of pages that can be walked during a call to g_walk_page_range
-#define FAST_TIER_WALK_THRESHOLD 33554432
+#define FAST_TIER_WALK_THRESHOLD 11184810
 
 #define MAX_N_FIND 65536U
 #define PMM_MIXED 1
@@ -164,11 +164,10 @@ static int page_scan_callback(pte_t *ptep, unsigned long addr,
 			}
 
 			ctx->tracking_range = next_vm_area;
-			ctx->tracking_range->fast_tier_bytes = 0;
-			ctx->tracking_range->slow_tier_bytes = 0;
+			//ctx->tracking_range->fast_tier_bytes = 0;
+			//ctx->tracking_range->slow_tier_bytes = 0;
 		}
 	}
-
 
 	if (ctx->tracking_range && ctx->tracking_range->start_addr <= addr &&
 	    ctx->tracking_range->end_addr > addr)
@@ -193,7 +192,7 @@ static int page_scan_callback(pte_t *ptep, unsigned long addr,
 
 	int cold_candidate = 0;
 
-	if (!pte_young(*ptep) && !pte_soft_dirty(*ptep)) {
+	if (!pte_young(*ptep) && !pte_dirty(*ptep)) {
 		if ((new_value & ((1 << 7) - 1)) > 0)
 			new_value--;
 		cold_candidate = 1;
@@ -201,7 +200,7 @@ static int page_scan_callback(pte_t *ptep, unsigned long addr,
 	if (pte_young(*ptep)) {
 		new_value += 2;
 	}
-	if (pte_soft_dirty(*ptep)) {
+	if (pte_dirty(*ptep)) {
 		new_value++;
 	}
 
@@ -218,16 +217,17 @@ skip_update:
 
 	int page_score = (new_value & ((1 << 7) - 1));
 
-	histogram[page_score % 1024]++;
+	histogram[page_score % 256]++;
 
 	if (is_page_in_pool(*ptep, DRAM_POOL)) {
 		temp_dram_usage += PAGE_SIZE;
 
-		if (managed_by_ambix) {
+		if (managed_by_ambix && age == 0) {
 			ctx->tracking_range->fast_tier_bytes += PAGE_SIZE;
 		}
 
-		if (age > 10 && page_score < g_threshold && cold_candidate) {
+		if (age > 10 && page_score <=  g_threshold  &&
+		    cold_candidate) {
 			heat_map_add_page(&ctx->fast_tier_pages, addr,
 					  ctx->curr_pid, COLD_PAGE);
 			temp_cold_page_count++;
@@ -235,15 +235,21 @@ skip_update:
 
 	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
 		temp_nvram_usage += PAGE_SIZE;
-		if (managed_by_ambix) {
+		if (managed_by_ambix && age == 0) {
 			ctx->tracking_range->slow_tier_bytes += PAGE_SIZE;
 		}
 
+		if ((page_score > 3 * g_threshold ||
+		     (age < 3 && page_score > 3)) &&
+		    !cold_candidate) {
+			if (page_score > 5 * g_threshold)
+				heat_map_add_page(&ctx->slow_tier_pages, addr,
+						  ctx->curr_pid, HOT_PAGE);
+			else
+				heat_map_add_page(&ctx->slow_tier_pages, addr,
+						  ctx->curr_pid,
+						  WARM_ACCESSED_PAGE);
 
-		if ((age <= 2 && !cold_candidate) ||
-		    (page_score > 6 * g_threshold && !cold_candidate)) {
-			heat_map_add_page(&ctx->slow_tier_pages, addr,
-					  ctx->curr_pid, HOT_PAGE);
 			temp_hot_page_count++;
 		}
 	}
@@ -251,7 +257,7 @@ skip_update:
 	if (new_value > last) {
 		old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
 		new_pte = pte_mkold(old_pte); // unset modified bit
-		new_pte = pte_clear_soft_dirty(new_pte); // unset dirty bit
+		new_pte = pte_mkclean(new_pte); // unset dirty bit
 		ptep_modify_prot_commit(walk->vma, addr, ptep, old_pte,
 					new_pte);
 	}
@@ -280,7 +286,7 @@ void calculate_treshold(void)
 
 	g_threshold = i + 1;
 
-	//pr_info("g_threshold: %d\n", g_threshold);
+	pr_info("g_threshold: %d very cold pages: %d\n", g_threshold, histogram[0]);
 }
 
 static int do_page_walk(struct bound_program_t *program,
@@ -361,63 +367,44 @@ repeat:
 		    walk_count == 0)
 			continue;
 
-		if (list_entry_is_head(bound_program, &bound_program_list,
-				       node) &&
-		    start_addr == 0) {
-			calculate_treshold();
-
-			char histogram_str[10752];
-
-			char *where = histogram_str;
-			for (i = 0; i < 256; i++) {
-				size_t printed = sprintf(where, "%d:%llu, ", i,
-							 histogram[i]);
-				histogram[i] = 0;
-				where += printed;
-			}
-
-			*where = '\n';
-
-			trace_printk("%s", histogram_str);
-		}
 
 		ctx->tracking_range = find_memory_range_for_address(
 			pid_nr(bound_program->__pid), start_addr);
 
-		if (ctx->tracking_range) {
-			ctx->tracking_range->fast_tier_bytes = 0;
-			ctx->tracking_range->slow_tier_bytes = 0;
-		}
+		pr_info("pid %d, start %lu", pid_nr(bound_program->__pid),
+			start_addr);
 
 		do_page_walk(bound_program, start_addr, MAX_ADDRESS,
 			     pte_handler, ctx);
 
-		start_addr = 0;
-
-		ret.end_pid = pid_nr(bound_program->__pid);
-
-		if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD)
-			ret.end_addr = 0;
-
-		else
-			ret.end_addr = ctx->last_addr;
-
 		walk_count++;
 
-		if (ctx->walk_iter == FAST_TIER_WALK_THRESHOLD)
+		if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD) {
+			start_addr = 0;
+		} else {
+			ret.end_pid = pid_nr(bound_program->__pid);
+			ret.end_addr = ctx->last_addr;
 			goto out;
+		}
+
+		if (walk_count > 10) {
+			ret.end_pid = pid_nr(bound_program->__pid);
+			ret.end_addr = ctx->last_addr;
+			goto out;
+		}
 	}
 
-	if (walk_count == 0) {
+	if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD) {
+		calculate_treshold();
+
+		for (i = 0; i < 256; i++) {
+			histogram[i] = 0;
+		}
 		walk_count++;
 		goto repeat;
 	}
 
 out:
-
-	if (ctx->walk_iter <= 1) {
-		ret.end_addr = 0;
-	}
 
 	mutex_unlock(&bound_list_mutex);
 
@@ -477,24 +464,21 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 
 	int ram_usage = get_real_memory_usage_per(DRAM_POOL);
 
-	if (ram_usage > DRAM_MEM_USAGE_TARGET_PERCENT &&
-	    heat_map_size(&ctx->fast_tier_pages)) {
+	if (ram_usage > 95 && heat_map_size(&ctx->fast_tier_pages)) {
 		demoted += do_migration(
 			&ctx->fast_tier_pages,
 			min(MAX_N_FIND, heat_map_size(&ctx->fast_tier_pages)),
 			NVRAM_POOL, COLDER_PAGES_FIRST);
 	}
 
-	if (ram_usage < DRAM_MEM_USAGE_TARGET_PERCENT &&
-	    heat_map_size(&ctx->slow_tier_pages)) {
+	if (ram_usage < 95 && heat_map_size(&ctx->slow_tier_pages)) {
 		promoted += do_migration(
 			&ctx->slow_tier_pages,
 			min(MAX_N_FIND, heat_map_size(&ctx->slow_tier_pages)),
 			DRAM_POOL, WARMER_PAGES_FIRST);
 	}
 
-	if (ram_usage == DRAM_MEM_USAGE_TARGET_PERCENT &&
-	    slow_tier_hotter_pages > 0) {
+	if (ram_usage >= 95 && slow_tier_hotter_pages > 0) {
 		demoted += do_migration(&ctx->fast_tier_pages,
 					min(MAX_N_FIND, slow_tier_hotter_pages),
 					NVRAM_POOL, COLDER_PAGES_FIRST);
