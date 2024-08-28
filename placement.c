@@ -371,6 +371,11 @@ static void walk_ranges_usage(void) {
       continue;
     }
     mm = get_task_mm(t);
+    if (!mm) {
+      pr_warn("Can't resolve mm_struct (%d).\n", pid_nr(PIDs[i].__pid));
+      put_task_struct(t);
+      continue;
+    }
     mmap_read_lock(mm);
     g_walk_page_range(mm, PIDs[i].start_addr, PIDs[i].end_addr, &mem_walk_ops,
                       NULL);
@@ -705,6 +710,7 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
     struct task_struct *t = get_pid_task(PIDs[idx].__pid, PIDTYPE_PID);
     struct mm_struct *mm;
     if (!t) {
+      pr_warn("Can't resolve task (%d).\n", pid_nr(PIDs[i].__pid));
       continue;
     }
 
@@ -719,6 +725,9 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
       mmap_read_unlock(mm);
       mmput(mm);
       mm = NULL;
+    }
+    if (!mm) {
+      pr_warn("Can't resolve mm_struct (%d).\n", pid_nr(PIDs[i].__pid));
     }
     put_task_struct(t);
 
@@ -821,6 +830,11 @@ static int clear_nvram_ptes(struct pte_callback_context_t *ctx) {
     }
     ctx->curr_pid_idx = i;
     mm = get_task_mm(t);
+    if (!mm) {
+      pr_warn("Can't resolve mm_struct (%d).\n", pid_nr(PIDs[i].__pid));
+      put_task_struct(t);
+      continue;
+    }
     mmap_write_lock(mm);
     g_walk_page_range(mm, 0, MAX_ADDRESS, &mem_walk_ops, ctx);
     mmap_write_unlock(mm);
