@@ -724,9 +724,7 @@ static int do_page_walk(pte_entry_handler_t pte_handler,
       g_walk_page_range(mm, left, right, &mem_walk_ops, ctx);
       mmap_read_unlock(mm);
       mmput(mm);
-      mm = NULL;
-    }
-    if (!mm) {
+    } else {
       pr_warn("Can't resolve mm_struct (%d).\n", pid_nr(PIDs[i].__pid));
     }
     put_task_struct(t);
