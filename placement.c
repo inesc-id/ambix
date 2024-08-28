@@ -10,6 +10,7 @@
  * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
+#include "linux/migrate_mode.h"
 #define pr_fmt(fmt) "ambix.PLACEMENT: " fmt
 
 #include <generated/utsrelease.h>
@@ -1288,6 +1289,10 @@ static struct page *alloc_dst_page(struct page *page, unsigned long data) {
                              ~__GFP_RECLAIM,
                          0);
 
+  if (newpage == NULL) {
+    pr_warn("Couldn't allocate page at %d.\n", nid);
+  }
+
   return newpage;
 }
 /*
@@ -1304,6 +1309,7 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
                                   int node, struct list_head *pagelist) {
   struct vm_area_struct *vma;
   struct page *page;
+  struct page *head;
   unsigned int follflags;
   int err;
 
@@ -1344,7 +1350,6 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 #endif
 
   err = -EACCES;
-  struct page *head;
 
   head = compound_head(page);
   err = g_isolate_lru_page(head);
