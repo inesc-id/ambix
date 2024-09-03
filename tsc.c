@@ -60,7 +60,7 @@ u64 tsc_to_usec(u64 tsc)
 }
 
 /**
- * Convert an amount of clock cycles to msec
+ * Convert an amount of clock cycles to nsec
  *
  */
 u64 tsc_to_nsec(u64 tsc)
@@ -73,7 +73,7 @@ u64 tsc_to_nsec(u64 tsc)
 }
 
 /**
- * Convert an amount of clock cycles to msec
+ * Convert an amount msec to clock cycles 
  *
  */
 u64 tsc_from_usec(u64 usec)
