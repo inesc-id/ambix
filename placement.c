@@ -1096,22 +1096,24 @@ int ambix_check_memory(void) {
 
   // pr_info("System DRAM Usage: %d\n", get_real_memory_usage_per(DRAM_POOL));
   // pr_info("System NVRAM Usage: %d\n", get_real_memory_usage_per(NVRAM_POOL));
+  u64 pmm_read = 0, pmm_write = 0, dram_read = 0, dram_write = 0;
+  pmm_read = perf_counters_pmm_reads();
+  pmm_write = perf_counters_pmm_writes();
+
+  dram_read = perf_counters_ddr_reads();
+  dram_write = perf_counters_pmm_writes();
+
+  pr_info("Bandwidth: %lld, %lld, %lld, %lld", dram_read, dram_write, pmm_read,
+          pmm_write);
+
   if (g_switch_act) {
-    u64 pmm_bw = 0, pmm_read = 0, pmm_write = 0, dram_read = 0, dram_write = 0;
+    u64 pmm_bw = 0;
 
     if (PMM_MIXED) {
       pmm_bw = perf_counters_pmm_writes() + perf_counters_pmm_reads();
     } else {
       pmm_bw = perf_counters_pmm_writes();
     }
-
-    pmm_read = perf_counters_pmm_reads();
-    pmm_write = perf_counters_pmm_writes();
-
-    dram_read = perf_counters_ddr_reads();
-    dram_write = perf_counters_pmm_writes();
-
-    pr_info("Bandwidth: %lld, %lld, %lld, %lld", dram_read, dram_write, pmm_read, pmm_write);
 
     pr_info("BANDWIDTH PMM = %lld", pmm_bw);
     pr_debug("ppm_bw: %lld, NVRAM_BW_THRESH: %d\n", pmm_bw,
