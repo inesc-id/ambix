@@ -1066,11 +1066,19 @@ int ambix_check_memory(void) {
   u32 n_migrated = 0;
   int i = 0;
   struct pte_callback_context_t *ctx = &g_context;
+  unsigned long long ts = ktime_get_real_fast_ns();
+  u64 pmm_read = 0, pmm_write = 0, dram_read = 0, dram_write = 0;
 
   pr_debug("Memory migration routine\n");
   pr_info("Migrated %llu since start", total_migrations);
 
-  unsigned long long ts = ktime_get_real_fast_ns();
+  mutex_lock(&PIDs_mtx);
+  refresh_pids();
+  if (PIDs_size == 0) {
+    pr_debug("No bound processes...\n");
+    goto release_return_acm;
+  }
+
   pr_info("dram,%llu,%llu,%llu,%llu,%llu,%llu", dram_migrations[0],
           dram_migrations[1], dram_migrations[2], dram_migrations[3],
           dram_migrations[4], ts);
@@ -1083,20 +1091,12 @@ int ambix_check_memory(void) {
     nvram_migrations[i] = 0;
   }
 
-  mutex_lock(&PIDs_mtx);
-  refresh_pids();
-  if (PIDs_size == 0) {
-    pr_debug("No bound processes...\n");
-    goto release_return_acm;
-  }
-
   walk_ranges_usage();
   // pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
   // pr_info("Ambix NVRAM Usage: %d\n", get_memory_usage_percent(NVRAM_POOL));
 
   // pr_info("System DRAM Usage: %d\n", get_real_memory_usage_per(DRAM_POOL));
   // pr_info("System NVRAM Usage: %d\n", get_real_memory_usage_per(NVRAM_POOL));
-  u64 pmm_read = 0, pmm_write = 0, dram_read = 0, dram_write = 0;
   pmm_read = perf_counters_pmm_reads();
   pmm_write = perf_counters_pmm_writes();
 
