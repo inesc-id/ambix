@@ -47,32 +47,32 @@ static bool g_perf_enabled = true;
  *
  */
 static int kmod_show(struct seq_file *s, void *private) {
-  if (g_show_aggregates) {
-    const u64 pmm_reads = perf_counters_pmm_reads(),
-              pmm_writes = perf_counters_pmm_writes(),
-              ddr_reads = perf_counters_ddr_reads(),
-              ddr_writes = perf_counters_ddr_writes();
-    seq_printf(s,
-               "PMM READS: %lld Mb/s\n"
-               "PMM WRITES: %lld Mb/s\n"
-               "DDR READS: %lld Mb/s\n"
-               "DDR WRITES: %lld Mb/s\n"
-               "PMM BW: %lld Mb/s\n"
-               "DDR BW: %lld Mb/s\n",
-               pmm_reads, pmm_writes, ddr_reads, ddr_writes,
-               pmm_reads + pmm_writes, ddr_reads + ddr_writes);
-  } else {
-    size_t i;
-    for (i = 0; i < EVENTs_size; ++i) {
-      u64 value, time;
-      bool enabled = perf_counters_read_change(i, &value, &time);
-      struct counter_t *const info = perf_counters_info(i);
-      seq_printf(s, "%ld:%s e:%s; dv:%lld %s; dt:%lld;\n", i, info->name,
-                 enabled ? "T" : "F",
-                 value / jiffies_to_sec(time) * info->mult / info->fact,
-                 info->unit, jiffies_to_sec(time));
-    }
-  }
+  // if (g_show_aggregates) {
+  //   const u64 pmm_reads = perf_counters_pmm_reads(),
+  //             pmm_writes = perf_counters_pmm_writes(),
+  //             ddr_reads = perf_counters_ddr_reads(),
+  //             ddr_writes = perf_counters_ddr_writes();
+  //   seq_printf(s,
+  //              "PMM READS: %lld Mb/s\n"
+  //              "PMM WRITES: %lld Mb/s\n"
+  //              "DDR READS: %lld Mb/s\n"
+  //              "DDR WRITES: %lld Mb/s\n"
+  //              "PMM BW: %lld Mb/s\n"
+  //              "DDR BW: %lld Mb/s\n",
+  //              pmm_reads, pmm_writes, ddr_reads, ddr_writes,
+  //              pmm_reads + pmm_writes, ddr_reads + ddr_writes);
+  // } else {
+  //   size_t i;
+  //   for (i = 0; i < EVENTs_size; ++i) {
+  //     u64 value, time;
+  //     bool enabled = perf_counters_read_change(i, &value, &time);
+  //     struct counter_t *const info = perf_counters_info(i);
+  //     seq_printf(s, "%ld:%s e:%s; dv:%lld %s; dt:%lld;\n", i, info->name,
+  //                enabled ? "T" : "F",
+  //                value / jiffies_to_sec(time) * info->mult / info->fact,
+  //                info->unit, jiffies_to_sec(time));
+  //   }
+  // }
   return 0;
 }
 
