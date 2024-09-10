@@ -1070,7 +1070,7 @@ int ambix_check_memory(void) {
   u64 pmm_read = 0, pmm_write = 0, dram_read = 0, dram_write = 0;
 
   pr_debug("Memory migration routine\n");
-  pr_info("Migrated %llu since start", total_migrations);
+  pr_debug("Migrated %llu since start", total_migrations);
 
   mutex_lock(&PIDs_mtx);
   refresh_pids();
@@ -1086,17 +1086,13 @@ int ambix_check_memory(void) {
   pr_info("nvram,%llu,%llu,%llu,%llu,%llu,%llu", nvram_migrations[0],
           nvram_migrations[1], nvram_migrations[2], nvram_migrations[3],
           nvram_migrations[4], ts);
+
   for (i = 0; i < 5; i++) {
     dram_migrations[i] = 0;
     nvram_migrations[i] = 0;
   }
 
   walk_ranges_usage();
-  // pr_info("Ambix DRAM Usage: %d\n", get_memory_usage_percent(DRAM_POOL));
-  // pr_info("Ambix NVRAM Usage: %d\n", get_memory_usage_percent(NVRAM_POOL));
-
-  // pr_info("System DRAM Usage: %d\n", get_real_memory_usage_per(DRAM_POOL));
-  // pr_info("System NVRAM Usage: %d\n", get_real_memory_usage_per(NVRAM_POOL));
   pmm_read = perf_counters_pmm_reads();
   pmm_write = perf_counters_pmm_writes();
 
