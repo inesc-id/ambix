@@ -1106,9 +1106,9 @@ int ambix_check_memory(void) {
     u64 pmm_bw = 0;
 
     if (PMM_MIXED) {
-      pmm_bw = perf_counters_pmm_writes() + perf_counters_pmm_reads();
+      pmm_bw = pmm_read + pmm_write;
     } else {
-      pmm_bw = perf_counters_pmm_writes();
+      pmm_bw = pmm_write;
     }
 
     pr_info("BANDWIDTH PMM = %lld", pmm_bw);
