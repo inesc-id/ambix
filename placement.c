@@ -1099,8 +1099,8 @@ int ambix_check_memory(void) {
   dram_read = perf_counters_ddr_reads();
   dram_write = perf_counters_pmm_writes();
 
-  pr_info("Bandwidth: %lld, %lld, %lld, %lld", dram_read, dram_write, pmm_read,
-          pmm_write);
+  pr_info("Bandwidth: %lld, %lld, %lld, %lld, %llu", dram_read, dram_write, pmm_read,
+          pmm_write, ts);
 
   if (g_switch_act) {
     u64 pmm_bw = 0;
