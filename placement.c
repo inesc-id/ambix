@@ -102,9 +102,12 @@ unsigned long long temp_nvram_usage = 0;
 unsigned long long temp_cold_page_count = 0;
 unsigned long long temp_hot_page_count = 0;
 
-unsigned long long histogram[1024] = { 0 };
+unsigned long long slow_tier_hist[1024] = { 0 };
+unsigned long long fast_tier_hist[1024] = { 0 };
 
 int g_threshold = 4;
+int g_fast_tier_threshold = 4;
+int g_slow_tier_threshold = 4;
 
 int page_cpupid_xchg_last(struct page *page, int cpupid)
 {
@@ -126,6 +129,19 @@ int page_cpupid_xchg_last(struct page *page, int cpupid)
 // ==================================================================================
 // CALLBACK FUNCTIONS
 // ==================================================================================
+
+
+#define CPUPID_BITS      21
+#define CPUPID_MAX       ((1 << CPUPID_BITS) - 1) // 0x1FFFFF
+#define SCORE_BITS       13
+#define AGE_BITS         8
+#define SCORE_MASK       ((1 << SCORE_BITS) - 1)  // 0x1FFF
+#define AGE_MASK         ((1 << AGE_BITS) - 1)    // 0xFF
+#define SCORE_THRESHOLD  128
+#define AGE_THRESHOLD    64
+#define SCORE_SHIFT      0
+#define AGE_SHIFT        SCORE_BITS
+
 
 static int page_scan_callback(pte_t *ptep, unsigned long addr,
 			      unsigned long next, struct mm_walk *walk)
@@ -173,60 +189,49 @@ static int page_scan_callback(pte_t *ptep, unsigned long addr,
 	    ctx->tracking_range->end_addr > addr)
 		managed_by_ambix = 1;
 
+	
 	page = g_vm_normal_page(walk->vma, addr, *ptep);
 
 	int last = page_cpupid_last(page);
-	int new_value = last;
-
-	int age_shift = LAST_CPUPID_SHIFT - 6;
-
-	int age = last >> age_shift;
-
-	if (last == 0x1fffff) {
-		new_value = 0;
-		age = 0;
-	}
-
-	if ((new_value & ((1 << 8) - 1)) >= 128)
-		goto skip_update;
-
+    int age = (last >> AGE_SHIFT) & AGE_MASK;
+    int score = (last >> SCORE_SHIFT) & SCORE_MASK;
+    int new_cpupid = last;
 	int cold_candidate = 0;
 
+    if (last == CPUPID_MAX) {
+        age = 0;
+        score = g_threshold;
+    }
+
+
 	if (!pte_young(*ptep) && !pte_dirty(*ptep)) {
-		if ((new_value & ((1 << 7) - 1)) > 0)
-			new_value--;
+		if (score > 0)
+			score--;
 		cold_candidate = 1;
-	}
-	if (pte_young(*ptep)) {
-		new_value += 2;
-	}
-	if (pte_dirty(*ptep)) {
-		new_value++;
-	}
-
-skip_update:
-
-	if (age == 0) {
-		value_count++;
+	} else  if (score < SCORE_THRESHOLD){
+		if (pte_young(*ptep))
+			score += 8;
+		if (pte_dirty(*ptep))
+			score += 4;
 	}
 
-	if (age < 64)
-		new_value += 1 << age_shift;
+	age += (age < AGE_THRESHOLD);
 
-	page_cpupid_xchg_last(page, new_value);
+	new_cpupid = (age << AGE_SHIFT) | (score << SCORE_SHIFT);
+    
 
-	int page_score = (new_value & ((1 << 7) - 1));
-
-	histogram[page_score % 256]++;
+    page_cpupid_xchg_last(page, new_cpupid);
 
 	if (is_page_in_pool(*ptep, DRAM_POOL)) {
 		temp_dram_usage += PAGE_SIZE;
+
+		fast_tier_hist[score%1024]++;
 
 		if (managed_by_ambix && age == 0) {
 			ctx->tracking_range->fast_tier_bytes += PAGE_SIZE;
 		}
 
-		if (age > 10 && page_score <=  g_threshold  &&
+		if (age > 10 && score <=  g_fast_tier_threshold  &&
 		    cold_candidate) {
 			heat_map_add_page(&ctx->fast_tier_pages, addr,
 					  ctx->curr_pid, COLD_PAGE);
@@ -234,27 +239,21 @@ skip_update:
 		}
 
 	} else if (is_page_in_pool(*ptep, NVRAM_POOL)) {
+		slow_tier_hist[score%1024]++;
+
 		temp_nvram_usage += PAGE_SIZE;
 		if (managed_by_ambix && age == 0) {
 			ctx->tracking_range->slow_tier_bytes += PAGE_SIZE;
 		}
 
-		if ((page_score > 3 * g_threshold ||
-		     (age < 3 && page_score > 3)) &&
-		    !cold_candidate) {
-			if (page_score > 5 * g_threshold)
-				heat_map_add_page(&ctx->slow_tier_pages, addr,
+		if (age > 10 && score >= g_slow_tier_threshold && !cold_candidate) {
+			heat_map_add_page(&ctx->slow_tier_pages, addr,
 						  ctx->curr_pid, HOT_PAGE);
-			else
-				heat_map_add_page(&ctx->slow_tier_pages, addr,
-						  ctx->curr_pid,
-						  WARM_ACCESSED_PAGE);
-
 			temp_hot_page_count++;
 		}
 	}
 
-	if (new_value > last) {
+	if (!cold_candidate) {
 		old_pte = ptep_modify_prot_start(walk->vma, addr, ptep);
 		new_pte = pte_mkold(old_pte); // unset modified bit
 		new_pte = pte_mkclean(new_pte); // unset dirty bit
@@ -273,21 +272,53 @@ PAGE WALKERS
 -------------------------------------------------------------------------------
 */
 
+
+
 void calculate_treshold(void)
 {
 	u64 total_pages = get_memory_total(DRAM_POOL) / PAGE_SIZE;
 	u64 temp = 0;
 	int i;
+
+
+
 	for (i = 255; i > 0; i--) {
-		temp += histogram[i];
+		temp += fast_tier_hist[i] + slow_tier_hist[i];
 		if (temp > total_pages)
 			break;
 	}
 
 	g_threshold = i + 1;
 
-	pr_info("g_threshold: %d very cold pages: %d\n", g_threshold, histogram[0]);
+	temp = 0;
+	for (i = 255; i > 0; i--) {
+		temp += slow_tier_hist[i];
+		if (temp >= MAX_N_FIND)
+			break;
+	}
+
+	g_slow_tier_threshold = max(i + 1, g_threshold);
+
+
+	temp = 0;
+	for (i = 0; i < 255; i++) {
+		temp += fast_tier_hist[i];
+		if (temp >= MAX_N_FIND)
+			break;
+	}
+
+	g_fast_tier_threshold = min(i, g_threshold) ;
+
+	for (i = 0; i < 256; i++) {
+		fast_tier_hist[i] = 0;
+		slow_tier_hist[i] = 0;
+	}
+
+
+
+	pr_info("g_threshold: %d; demote treshold: %d; promote treshold: %d\n", g_threshold, g_fast_tier_threshold, g_slow_tier_threshold);
 }
+
 
 static int do_page_walk(struct bound_program_t *program,
 			unsigned long start_addr, unsigned long end_addr,
@@ -396,10 +427,6 @@ repeat:
 
 	if (ctx->walk_iter < FAST_TIER_WALK_THRESHOLD) {
 		calculate_treshold();
-
-		for (i = 0; i < 256; i++) {
-			histogram[i] = 0;
-		}
 		walk_count++;
 		goto repeat;
 	}
