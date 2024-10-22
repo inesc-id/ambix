@@ -83,6 +83,9 @@ struct pte_callback_context_t {
 struct vm_area_walk_t last_fast_tier_scan;
 struct vm_area_walk_t last_slow_tier_scan;
 
+unsigned long long g_promotion_count = 0;
+unsigned long long g_demotion_count = 0;
+
 unsigned long long pages_walked = 0;
 unsigned long long total_migrations = 0;
 unsigned long long dram_migrations[5];
@@ -515,6 +518,10 @@ int mem_walk(struct pte_callback_context_t *ctx, const int n, const int mode)
 				     min(MAX_N_FIND, slow_tier_hotter_pages),
 				     DRAM_POOL, WARMER_PAGES_FIRST);
 	}
+
+	g_promotion_count += promoted;
+	g_demotion_count += demoted;
+
 
 	pr_info("Promoted: %d, Demoted: %d\n", promoted, demoted);
 

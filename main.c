@@ -89,8 +89,8 @@ static int kmod_show(struct seq_file *s, void *private)
 
 	seq_printf(
 		s,
-		"fast_tier_usage, slow_tier_usage, allocation_site\n%llu, %llu, -1\n",
-		fast_tier_bytes, slow_tier_bytes);
+		"fast_tier_usage, slow_tier_usage, allocation_site, promotions, demotions\n%llu, %llu, -1, %llu, %llu\n",
+		fast_tier_bytes, slow_tier_bytes, g_promotion_count, g_demotion_count);
 
 	return 0;
 }
