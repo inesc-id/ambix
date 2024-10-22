@@ -9,17 +9,22 @@
  * marques <miguel.soares.marques@tecnico.ulisboa.pt>
  */
 
+#include "ambix_types.h"
+#include <linux/perf_event.h>
 #include <linux/pid.h>
 #include <linux/mutex.h>
 #include <linux/sysinfo.h>
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/mm.h>
+#include <linux/rwlock.h>
+#include <linux/proc_fs.h>
 
 #include "config.h"
 #include "sys_mem_info.h"
 #include "kernel_symbols.h"
 #include "vm_management.h"
+#include "migrate.h"
 
 DEFINE_MUTEX(USAGE_mtx);
 
@@ -32,8 +37,87 @@ const int NVRAM_NODES[] = _NVRAM_NODES;
 const int n_dram_nodes = ARRAY_SIZE(DRAM_NODES);
 const int n_nvram_nodes = ARRAY_SIZE(NVRAM_NODES);
 
-static unsigned long long dram_usage = 0;
-static unsigned long long nvram_usage = 0;
+unsigned long long ambix_dram_usage = 0;
+unsigned long long ambix_nvram_usage = 0;
+
+unsigned long long total_dram_usage = 0;
+unsigned long long total_nvram_usage = 0;
+
+struct proc_dir_entry *proc_dir;
+
+static int vm_area_mem_info_show(struct seq_file *s, void *private)
+{
+	char *filename = s->file->f_path.dentry->d_iname;
+	int pid;
+	unsigned long start_addr;
+	struct memory_range_t *vm_area;
+
+	sscanf(filename, "%d.%lu", &pid, &start_addr);
+
+	mutex_lock(&bound_list_mutex);
+
+
+	vm_area = find_memory_range_for_address(pid, start_addr);
+
+	if (!vm_area) {
+		seq_printf(
+			s,
+			"fast_tier_usage, slow_tier_usage, allocation_site\n-1, -1, -1\n");
+
+		mutex_unlock(&bound_list_mutex);
+
+		return 0;
+	}
+
+
+	/*if (vm_area->start_addr != start_addr) {
+		seq_printf(
+			s,
+			"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, 0\n", vm_area->start_addr, start_addr);
+
+		mutex_unlock(&bound_list_mutex);
+
+		return 0;
+	}*/
+
+	seq_printf(
+		s,
+		"fast_tier_usage, slow_tier_usage, allocation_site\n%lu, %lu, %lu\n",
+		vm_area->fast_tier_bytes, vm_area->slow_tier_bytes,
+		vm_area->allocation_site);
+
+	mutex_unlock(&bound_list_mutex);
+
+	return 0;
+}
+
+static int vm_area_proc_open(struct inode *node, struct file *file)
+{
+	return single_open(file, vm_area_mem_info_show, NULL);
+}
+
+static const struct proc_ops kmod_proc_ops = {
+	.proc_open = vm_area_proc_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = single_release,
+};
+
+int create_proc_file(int pid, unsigned long start_addr)
+{
+	char filename[128];
+	struct proc_dir_entry *entry;
+	// ! check function return
+	snprintf(filename, 128, "%d.%lu", pid, start_addr);
+
+	entry = proc_create(filename, 0666, proc_dir, &kmod_proc_ops);
+
+	if (!entry) {
+		return -ENOMEM;
+	}
+
+	return 0;
+}
 
 int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 {
@@ -53,60 +137,10 @@ int is_page_in_pool(pte_t pte_t, enum pool_t pool)
 			return 1;
 		}
 	}
-	return 0;
-}
-
-static int pte_callback_usage(pte_t *ptep, unsigned long addr,
-			      unsigned long next, struct mm_walk *walk)
-{
-	if (pte_present(*ptep) && is_page_in_pool(*ptep, DRAM_POOL)) {
-		dram_usage +=
-			4; // 4KiB per page, should change to a variable in the future
-	} else if (pte_present(*ptep) && is_page_in_pool(*ptep, NVRAM_POOL)) {
-		nvram_usage += 4;
-	}
 
 	return 0;
 }
 
-void walk_ranges_usage(void)
-{
-	struct task_struct *t = NULL;
-	struct mm_walk_ops mem_walk_ops = { .pte_entry = pte_callback_usage };
-	struct mm_struct *mm = NULL;
-	int i;
-	pr_info("Walking page ranges to get memory usage");
-
-	dram_usage = 0;
-	nvram_usage = 0;
-
-	mutex_lock(&USAGE_mtx);
-	for (i = 0; i < VM_AREAS_COUNT; i++) {
-		t = get_pid_task(AMBIX_VM_AREAS[i].__pid, PIDTYPE_PID);
-		if (!t) {
-			pr_warn("Can't resolve task (%d).\n",
-				pid_nr(AMBIX_VM_AREAS[i].__pid));
-			continue;
-		}
-		mm = get_task_mm(t);
-		if (!mm) {
-			pr_warn("Can't resolve mm_struct of task (%d)",
-				pid_nr(AMBIX_VM_AREAS[i].__pid));
-			put_task_struct(t);
-			continue;
-		}
-		mmap_read_lock(mm);
-		g_walk_page_range(mm, AMBIX_VM_AREAS[i].start_addr, AMBIX_VM_AREAS[i].end_addr,
-				  &mem_walk_ops, NULL);
-		mmap_read_unlock(mm);
-		
-		mmput(mm);
-		mm = NULL;
-		put_task_struct(t);
-		t = NULL;
-	}
-	mutex_unlock(&USAGE_mtx);
-}
 
 // page count to KiB
 const int *get_pool_nodes(const enum pool_t pool)
@@ -158,12 +192,12 @@ u32 get_real_memory_usage_per(enum pool_t pool)
 	for (i = 0; i < size; ++i) {
 		struct sysinfo inf;
 		g_si_meminfo_node(&inf, nodes[i]);
-		totalram += inf.totalram;
-		freeram += inf.freeram;
+		totalram += inf.totalram * inf.mem_unit;
+		freeram += inf.freeram * inf.mem_unit;
 	}
 
 	// integer division so we need to scale the values so the quotient != 0
-	return (K(totalram - freeram) * 100 / K(totalram));
+	return ((totalram - freeram) * 100) / totalram;
 }
 
 // returns used memory for pool in KiB (times the usage factor)
@@ -174,7 +208,7 @@ u32 get_real_memory_usage_per(enum pool_t pool)
 u32 get_memory_usage_percent(enum pool_t pool)
 {
 	int i = 0;
-	u64 totalram = 0, freeram = 0;
+	u64 totalram = 0, usedram = 0;
 	const int *nodes = get_pool_nodes(pool);
 	size_t size = get_pool_size(pool);
 	u32 ratio;
@@ -188,24 +222,47 @@ u32 get_memory_usage_percent(enum pool_t pool)
 	for (i = 0; i < size; ++i) {
 		struct sysinfo inf;
 		g_si_meminfo_node(&inf, nodes[i]);
-		totalram += inf.totalram;
+		totalram += inf.totalram * inf.mem_unit;
 		// freeram += inf.freeram;
 	}
 
-	mutex_lock(&USAGE_mtx);
+	mutex_lock(&bound_list_mutex);
+
+
 	if (pool == DRAM_POOL) {
-		freeram = K(totalram) - dram_usage;
+		usedram = ambix_dram_usage;
 	} else {
-		freeram = K(totalram) - nvram_usage;
+		usedram = ambix_nvram_usage;
 	}
-	mutex_unlock(&USAGE_mtx);
+	mutex_unlock(&bound_list_mutex);
+
 
 	// pr_info("K(totalram) - freeram = %llu", (K(totalram) - freeram));
 	// pr_info("((K(totalram) - freeram) * 100 / K(totalram)) = %llu",
 	// ((K(totalram) - freeram) * 100 / K(totalram)));
 
 	// integer division so we need to scale the values so the quotient != 0
-	return ((K(totalram) - freeram) * 100 / K(totalram)) * 100 / ratio;
+	if (ratio == 0)
+		return 0;
+
+	return ((usedram * 100) / (totalram)) * (100 / ratio);
+}
+
+unsigned long long get_memory_usage_bytes(enum pool_t pool)
+{
+	unsigned long long usedmem;
+	mutex_lock(&bound_list_mutex);
+
+
+	if (pool == DRAM_POOL) {
+		usedmem = total_dram_usage;
+	} else {
+		usedmem = total_nvram_usage;
+	}
+	mutex_unlock(&bound_list_mutex);
+
+
+	return usedmem;
 }
 
 // number of bytes in total for pool (after being reduced with a certain ratio)

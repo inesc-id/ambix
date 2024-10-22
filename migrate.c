@@ -176,6 +176,7 @@ int kernel_migrate_pages(struct list_head *pagelist, int node)
 	return err;
 }
 
+// Does migrations in batches per pid
 int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 		 const enum pool_t dst, int priority)
 {
@@ -187,7 +188,7 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 	int err, rc = 0;
 	unsigned long found_addr, addr;
 	pid_t page_pid, last_page_pid = -1;
-	size_t vm_area_idx;
+	struct pid *vm_area_pid;
 	struct task_struct *t = NULL;
 	struct mm_struct *mm = NULL;
 
@@ -202,14 +203,14 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 	pr_debug("DO MIGRATION: %ld pages -> %s", n_to_migrate,
 		 get_pool_name(dst));
 
-	FREQ_ORDERED_TRAVERSE(heat_map, priority, found_addr, vm_area_idx)
+	FREQ_ORDERED_TRAVERSE(heat_map, priority, found_addr, vm_area_pid)
 	{
 		if (pages_migrated >= n_to_migrate) {
 			break;
 		}
 
 		addr = (unsigned long)untagged_addr(found_addr);
-		page_pid = pid_nr(AMBIX_VM_AREAS[vm_area_idx].__pid);
+		page_pid = pid_nr(vm_area_pid);
 
 		if (page_pid != last_page_pid && mm) {
 			pages_migrated -= kernel_migrate_pages(&pagelist, node);
@@ -221,13 +222,11 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 		}
 
 		if (!mm) {
-			t = get_pid_task(AMBIX_VM_AREAS[vm_area_idx].__pid,
-					 PIDTYPE_PID);
+			t = get_pid_task(vm_area_pid, PIDTYPE_PID);
 
 			if (t == NULL) {
 				pr_warn("Migration: Can't resolve struct of task (%d).\n",
-					pid_nr(AMBIX_VM_AREAS[vm_area_idx]
-						       .__pid));
+					pid_nr(vm_area_pid));
 				goto out;
 			}
 
@@ -235,8 +234,7 @@ int do_migration(struct vm_heat_map *heat_map, const size_t n_to_migrate,
 
 			if (mm == NULL) {
 				pr_warn("Migration: Can't resolve mm_struct of task (%d).\n",
-					pid_nr(AMBIX_VM_AREAS[vm_area_idx]
-						       .__pid));
+					pid_nr(vm_area_pid));
 				goto out;
 			}
 

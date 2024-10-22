@@ -19,7 +19,7 @@
 // Ratio of real DRAM available to Ambix.
 // e.g. If the machine has 8GiB of RAM but the user only wants Ambix to see
 // 4GiB, this parameter should be set to 50
-#define DRAM_MEM_USAGE_RATIO 25
+#define DRAM_MEM_USAGE_RATIO 97
 // Ratio of real NVRAM available to Ambix
 // Analogous to DRAM_USAGE_RATIO
 #define NVRAM_MEM_USAGE_RATIO 100

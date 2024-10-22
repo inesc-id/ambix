@@ -20,6 +20,13 @@ M(struct page *, follow_page, (
 M(int, isolate_lru_page, (struct page *page));
 M(bool, isolate_huge_page, (struct page *page, struct list_head *list));
 M(bool, vma_migratable, (struct vm_area_struct *vma));
+M(struct page *, vm_normal_page, (struct vm_area_struct *vma, unsigned long addr,
+			    pte_t pte));
+M(struct page *, vm_normal_page_pmd, (struct vm_area_struct *vma, unsigned long addr,
+				pmd_t pmd));
+
+M(unsigned long, change_prot_numa, (struct vm_area_struct *vma,
+			unsigned long addr, unsigned long end));
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,5)
 #else
