@@ -1,5 +1,18 @@
-# Ambix - Dynamic Page Placement on Real Persistent Memory Systems
-**[Paper](https://arxiv.org/abs/2112.12685) on the first version of Ambix.**
+# Ambix - Tiered Page Placement on Hybrid Memory Systems
+
+Ambix is an open source project developed at the [DPSS group](https://www.dpss.inesc-id.pt/) at [INESC-ID](https://www.inesc-id.pt/). 
+The project is lead by [João Pedro Barreto](https://www.dpss.inesc-id.pt/~jpbarreto/) 
+and has received contributions from many collaborators: Miguel Marques, Vasco Correia, André Gonçalves, Ilya Kuzmin, João Póvoas.
+
+Main contact: [João Pedro Barreto](https://www.dpss.inesc-id.pt/~jpbarreto/)
+
+## Publications
+
+- [Better Memory Tiering, Right from the First Placement](https://dl.acm.org/doi/10.1145/3676151.3719378). João Póvoas, João Barreto, Bartosz Chomiski, André Gonçalves, Fedar Karabeinikau, Maciej Maciejewski, Jakub Schmiegel, and Kostiantyn Storozhuk. Proceedings of the 16th ACM/SPEC ICPE, 2025. Describes the integragion of Ambix with a tiering-aware memory allocator by Huawei, developed in the context of a cooperation project between Huawei and INESC-ID.
+
+- [Dynamic Page Placement on Real Persistent Memory Systems](https://arxiv.org/abs/2112.12685). Miguel Marques, Ilia Kuzmin, João Barreto, José Monteiro, Rodrigo Rodrigues. arxiv preprint, 2021. Describes the first version of Ambix and some results with Intel Optane DC PM.
+
+
 
 ## Dependencies
 - GCC (>= 8.3.0)
